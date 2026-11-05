@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.0
+- Changed the plugin ID to **Community.Chat** and added the GitHub repository link (`https://github.com/MrJeffAgency/Community/tree/main`) to the plugin manifest. Because the ID changed, remove the old `mrjeffagency.community` build before installing this one.
+- Added **room airdrops**: in a room or direct chat, choose Airdrop and the first person to claim gets the funds in their own wallet.
+- Airdrops use a temporary claim wallet funded on-chain. The encrypted gift card contains the claim key, so it never appears in plaintext on the relay.
+- Token airdrops include a native gas stipend so the claimer can move the tokens; native-coin airdrops fund the displayed amount plus a stipend.
+- Added a fallback dialog that shows the claim key if the chat card cannot be posted after funding.
+- Airdrops are blocked in the AI Room, and claim cards show funding and claim transaction links.
+- Updated the README with airdrop usage and privacy notes.
+
 ## 1.4.0
 - The wallet now shows balances on **Celo**, **BNB Smart Chain**, **Polygon** and **Ethereum** from one address.
 - Added **G$ (GoodDollar)** balances on Celo and Ethereum, plus USDT/USDC on every supported network and HDO on Celo.

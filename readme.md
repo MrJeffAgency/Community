@@ -1,6 +1,6 @@
 # Community Chat
 
-Community Chat is a private, local-first chat plugin for Acode with preset rooms, a built-in AI helper, direct chats, photo sharing, token transfers and a built-in multi-chain wallet.
+Community Chat is a private, local-first chat plugin for Acode with preset rooms, a built-in AI helper, direct chats, photo sharing, token transfers, room airdrops and a built-in multi-chain wallet.
 
 ## Features
 
@@ -14,6 +14,7 @@ Community Chat is a private, local-first chat plugin for Acode with preset rooms
 - **Notifications**: Get a notification when a new message arrives.
 - **Multi-chain wallet**: Every user (new and existing) gets an EVM wallet, created on the phone. The **Me** tab shows the address and live balances on **Celo**, **BNB Smart Chain**, **Polygon** and **Ethereum**, including **G$**, **USDT**, **USDC** and **HDO**, with copy, refresh and private-key backup.
 - **Token transfers**: Send native coins or tokens to any `0x` wallet address from the wallet, or tap the 🪙 button in a room or direct chat to send and post an encrypted receipt card. Token sending is unavailable in the AI Room.
+- **Room airdrops**: In a room or direct chat, choose **Airdrop** instead of a wallet address. The plugin funds a temporary claim wallet and posts an encrypted gift card; the first person to tap **Claim to my wallet** moves the tokens to their own address. Airdrops are unavailable in the AI Room.
 - **Encrypted backup**: Export your chats, contacts and wallet key protected by a passphrase (PBKDF2 + AES-256-GCM).
 - **Safety number**: In a direct chat, open Chat options and compare the safety number with your friend to confirm nobody is impersonating them.
 
@@ -29,12 +30,14 @@ Community Chat is a private, local-first chat plugin for Acode with preset rooms
 
 Tap a room chip in the **Chats** tab to switch rooms. You can also set a custom room code from the **Me** tab. Everyone who wants to chat together must use the same room code.
 
+> Upgrading from the old `mrjeffagency.community` build? Uninstall that plugin first, then install this `Community.Chat` package. Your chats and wallet are stored under the same local key, but Acode treats the two plugin IDs as separate apps.
+
 ## Usage
 
 1. Open the **Community** app from the sidebar.
 2. Pick a room chip, or open **Me** to set a custom room code.
 3. Tap **Copy invite message** in **Me** and send it to a friend. They can paste the whole invite (ID + secure key) into **People → Add contact**.
-4. Tap the photo button in the composer to send an image, or the 🪙 button to send tokens in a room or direct chat (not in the AI Room).
+4. Tap the photo button in the composer to send an image, or the 🪙 button to send tokens — or create an airdrop — in a room or direct chat (not in the AI Room).
 5. In the **AI Room**, type a question and Lucky AI will reply.
 
 ## Multi-chain wallet
@@ -56,6 +59,16 @@ Tap a room chip in the **Chats** tab to switch rooms. You can also set a custom 
 - Token sending is disabled in the **AI Room** because that room is a private conversation with Lucky AI, not with other users.
 - On-chain transfers are public and irreversible, even though the chat receipt is end-to-end encrypted. Double-check the address before confirming. Lose your key and the funds are gone.
 
+## Room airdrops
+
+- In a room or direct chat, tap 🪙 and set **Delivery** to **Airdrop** instead of entering a wallet address.
+- The plugin creates a temporary claim wallet on the phone, funds it on-chain and posts an encrypted gift card to the chat.
+- For a token airdrop, the temporary wallet receives the token amount plus a small native gas stipend, so the claimer does not need gas. For a native-coin airdrop, the plugin funds the displayed amount plus a gas stipend.
+- The first person to tap **Claim to my wallet** signs a transfer from the temporary wallet to their own address. Later claims fail because the pot is empty. The claim transaction link is shown on the card.
+- Airdrop claim keys are inside the encrypted message payload only. They are never shown on the card or sent to the relay in plaintext. The sender can also open the fallback dialog to copy the claim key if posting the card fails.
+- Airdrops are unavailable in the **AI Room**.
+- Preset rooms use public room codes: anyone who knows the code can join and claim an airdrop posted there. Use a private room code for a private drop.
+
 ## Privacy
 
 - Messages and contacts are stored locally on your device.
@@ -68,7 +81,8 @@ Tap a room chip in the **Chats** tab to switch rooms. You can also set a custom 
 - Preset rooms use public codes, so the room header shows “public room”. Create your own room code for private groups.
 - AI Room replies are stored on the device and not relayed to other users, but the text you type in the AI Room is sent to the Lucky AI server (`luckyai-blush.vercel.app`) to get an answer.
 - Token receipts posted in chats are end-to-end encrypted like other messages. The blockchain transaction itself is public: the sender, recipient, amount and token are visible on the relevant chain's explorer.
+- Airdrop claim keys travel inside the encrypted message payload. Whoever can decrypt the chat can claim the airdrop. Treat a public-room airdrop as a public giveaway.
 
 ## Author
 
-MrJeffAgency — `princejeffery7214810@gmail.com` · GitHub: [MrJeffAgency](https://github.com/MrJeffAgency)
+MrJeffAgency — `princejeffery7214810@gmail.com` · GitHub: [MrJeffAgency](https://github.com/MrJeffAgency) · Repository: [MrJeffAgency/Community](https://github.com/MrJeffAgency/Community/tree/main)

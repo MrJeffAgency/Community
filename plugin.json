@@ -1,13 +1,14 @@
 {
-  "id": "mrjeffagency.community",
+  "id": "Community.Chat",
   "name": "Community Chat",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "main": "main.js",
   "readme": "readme.md",
   "icon": "icon.png",
   "files": [
     "style.css"
   ],
+  "repository": "https://github.com/MrJeffAgency/Community/tree/main",
   "minVersionCode": 290,
   "price": 0,
   "license": "MIT",

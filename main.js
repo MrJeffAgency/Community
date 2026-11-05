@@ -18,8 +18,8 @@
    * Constants
    * ------------------------------------------------------------------ */
 
-  var PLUGIN_ID = "mrjeffagency.community";
-  var VERSION = "1.4.0";
+  var PLUGIN_ID = "Community.Chat";
+  var VERSION = "1.5.0";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -110,6 +110,7 @@
     aiBusy: false,
     aiPending: 0,
     sendingToken: false,
+    claimingAirdrop: false,
     wallet: { data: null, loading: false, error: "", at: 0 }
   };
 
@@ -422,7 +423,7 @@
     });
   }
 
-  function buildWireEnvelope(peer, text, image, slug, token) {
+  function buildWireEnvelope(peer, text, image, slug, token, airdrop) {
     var room = String(slug || roomSlug());
     var envelope = {
       app: APP_TAG,
@@ -462,6 +463,7 @@
         var aad = utf8Bytes(peer === "community" ? ENC_AAD_ROOM : ENC_AAD_DM);
         var payload = { text: text || "", image: image || "" };
         if (token) payload.token = token;
+        if (airdrop) payload.airdrop = airdrop;
         var plain = utf8Bytes(JSON.stringify(payload));
         return window.crypto.subtle.encrypt(
           { name: "AES-GCM", iv: iv, additionalData: aad },
@@ -507,7 +509,8 @@
       return {
         text: String(payload && payload.text || ""),
         image: sanitizeImage(payload && payload.image || ""),
-        token: sanitizeToken(payload && payload.token)
+        token: sanitizeToken(payload && payload.token),
+        airdrop: sanitizeAirdrop(payload && payload.airdrop)
       };
     });
   }
@@ -679,6 +682,47 @@
     return "💸 Sent " + token.amount + " " + token.symbol + " on " + chain.name;
   }
 
+  function sanitizeAirdrop(value) {
+    if (!value || typeof value !== "object") return null;
+    var chain = walletChainByKey(String(value.chain || ""));
+    if (!chain) return null;
+    var claimKey = String(value.claimKey == null ? "" : value.claimKey)
+      .replace(/^0x/i, "")
+      .toLowerCase();
+    if (!isHexKey(claimKey)) return null;
+    var amount = String(value.amount == null ? "" : value.amount).replace(/,/g, "").slice(0, 32);
+    if (!/^\d+(\.\d+)?$/.test(amount) || /^[0.]+$/.test(amount)) return null;
+    var rawToken = String(value.tokenAddress == null ? "" : value.tokenAddress).trim();
+    if (rawToken && !isAddress(rawToken)) return null;
+    var decimals = Number(value.decimals);
+    if (!(decimals >= 0 && decimals <= 36)) decimals = chain.native.decimals;
+    var symbol = String(value.symbol == null ? "" : value.symbol).slice(0, 12);
+    if (!/^[A-Za-z0-9$._-]{1,12}$/.test(symbol)) symbol = rawToken ? "TOKEN" : chain.native.symbol;
+    var fundingTx = /^0x[0-9a-f]{64}$/i.test(String(value.fundingTx || ""))
+      ? String(value.fundingTx).toLowerCase()
+      : "";
+    var claimedTx = /^0x[0-9a-f]{64}$/i.test(String(value.claimedTx || ""))
+      ? String(value.claimedTx).toLowerCase()
+      : "";
+    return {
+      chain: chain.key,
+      claimKey: claimKey,
+      amount: amount,
+      decimals: decimals,
+      symbol: symbol,
+      tokenAddress: rawToken ? rawToken.toLowerCase() : "",
+      fundingTx: fundingTx,
+      claimed: !!value.claimed || !!claimedTx,
+      claimedTx: claimedTx
+    };
+  }
+
+  function airdropText(airdrop) {
+    if (!airdrop) return "";
+    var chain = walletChainByKey(airdrop.chain) || { name: airdrop.chain };
+    return "🎁 Airdrop: " + airdrop.amount + " " + airdrop.symbol + " on " + chain.name;
+  }
+
   function cleanRelay(value) {
     var str = String(value == null ? "" : value).trim();
     if (!str) return "";
@@ -810,7 +854,8 @@
       var image = sanitizeImage(message.image);
       var text = typeof message.text === "string" ? message.text : "";
       var token = sanitizeToken(message.token);
-      if (!text && !image && !token) continue;
+      var airdrop = sanitizeAirdrop(message.airdrop);
+      if (!text && !image && !token && !airdrop) continue;
       var from = normalizeId(message.from);
       if (!from) continue;
       var status = message.status;
@@ -822,9 +867,10 @@
         id: message.id.slice(0, 80),
         from: from,
         name: cleanName(message.name),
-        text: safeText(text || tokenText(token), from === AI_ID ? MAX_AI_TEXT : MAX_TEXT),
+        text: safeText(text || tokenText(token) || airdropText(airdrop), from === AI_ID ? MAX_AI_TEXT : MAX_TEXT),
         image: image,
         token: token,
+        airdrop: airdrop,
         ts: Number(message.ts) || Date.now(),
         mine: !!message.mine,
         status: status
@@ -1474,7 +1520,7 @@
   }
 
   function sendTokenOnChain(options) {
-    if (!state || !state.wallet) return Promise.reject(new Error("Create a wallet first"));
+    if (!state) return Promise.reject(new Error("Plugin is not ready yet"));
     if (!walletSupported()) return Promise.reject(new Error("This device cannot sign transactions"));
     var chain = walletChainByKey(options && options.chainKey);
     if (!chain) return Promise.reject(new Error("Choose a network"));
@@ -1486,8 +1532,18 @@
     var data = token ? erc20TransferData(options.to, amount) : new Uint8Array(0);
     var txTo = token ? token.address : options.to;
     var value = token ? wConst().Z : amount;
-    var from = state.wallet.address;
-    var privateKey = state.wallet.privateKey;
+    var customFrom = options.from && isAddress(options.from) ? checksumAddress(options.from) : "";
+    var customKey = typeof options.privateKey === "string"
+      ? options.privateKey.replace(/^0x/i, "").toLowerCase()
+      : "";
+    if (customKey && !isHexKey(customKey)) {
+      return Promise.reject(new Error("The signing key for this transfer is not valid"));
+    }
+    var from = customFrom || (state.wallet && state.wallet.address) || "";
+    var privateKey = customKey || (state.wallet && state.wallet.privateKey) || "";
+    if (!from || !isHexKey(privateKey)) {
+      return Promise.reject(new Error("Create a wallet first"));
+    }
     var holder = from.slice(2).toLowerCase();
 
     return Promise.all([
@@ -2175,23 +2231,24 @@
     if (envelope.enc === ENC_VERSION) {
       decryptWireEnvelope(envelope).then(function (payload) {
         if (!state || !payload) return;
-        applyIncomingMessage(envelope, from, contact, messageId, payload.text, payload.image, ts, payload.token);
+        applyIncomingMessage(envelope, from, contact, messageId, payload.text, payload.image, ts, payload.token, payload.airdrop);
       }).catch(function () {
         /* Ignore messages this device cannot decrypt. */
       });
       return;
     }
 
-    applyIncomingMessage(envelope, from, contact, messageId, envelope.text, envelope.image, ts, envelope.token);
+    applyIncomingMessage(envelope, from, contact, messageId, envelope.text, envelope.image, ts, envelope.token, envelope.airdrop);
   }
 
-  function applyIncomingMessage(envelope, from, contact, messageId, rawText, rawImage, ts, rawToken) {
+  function applyIncomingMessage(envelope, from, contact, messageId, rawText, rawImage, ts, rawToken, rawAirdrop) {
     if (!state) return;
     var text = String(rawText == null ? "" : rawText).slice(0, MAX_TEXT).trim();
     var image = sanitizeImage(rawImage);
     var token = sanitizeToken(rawToken);
+    var airdrop = sanitizeAirdrop(rawAirdrop);
     var isImage = !!image;
-    if (!text && !image && !token) return;
+    if (!text && !image && !token && !airdrop) return;
 
     var to = String(envelope.to || "all");
     var peer = to === "all" ? "community" : from;
@@ -2203,7 +2260,9 @@
     });
     if (duplicate) return;
 
-    var storedText = isImage && !text ? "📷 Photo" : (token ? tokenText(token) : text);
+    var storedText = isImage && !text
+      ? "📷 Photo"
+      : (token ? tokenText(token) : (airdrop ? airdropText(airdrop) : text));
     thread.messages.push({
       id: messageId,
       from: from,
@@ -2211,6 +2270,7 @@
       text: safeText(storedText, isImage ? MAX_IMAGE_CAPTION : MAX_TEXT),
       image: image,
       token: token,
+      airdrop: airdrop,
       ts: ts,
       mine: false,
       status: "sent"
@@ -2235,7 +2295,9 @@
     updateSidebar();
 
     if (!inThread && ts > Date.now() - 90000) {
-      notifyMessage(contact, peer, isImage && !text ? "📷 Photo" : (token ? tokenText(token) : text));
+      notifyMessage(contact, peer, isImage && !text
+        ? "📷 Photo"
+        : (token ? tokenText(token) : (airdrop ? airdropText(airdrop) : text)));
     }
   }
 
@@ -2332,7 +2394,7 @@
   }
 
   function deliverMessage(peer, message, topic, slug) {
-    return buildWireEnvelope(peer, message.text || "", message.image || "", slug, message.token || null).then(function (envelope) {
+    return buildWireEnvelope(peer, message.text || "", message.image || "", slug, message.token || null, message.airdrop || null).then(function (envelope) {
       envelope.id = message.id;
       envelope.ts = message.ts;
       return publish(envelope, topic);
@@ -2387,6 +2449,275 @@
         toastMsg(reason
           ? "Tokens were sent on-chain, but the chat note could not be posted. Tap it to retry. (" + reason + ")"
           : "Tokens were sent on-chain, but the chat note could not be posted. Tap it to retry.", 6200);
+      });
+  }
+
+  function showAirdropKey(info, note) {
+    if (!state || !info || !info.claimKey) return;
+    var modal = openModal("Airdrop claim key");
+    modal.body.appendChild(cmEl("p", "",
+      note || "The airdrop is funded and ready. Share the chat message so a room member can claim it. " +
+      "If the card cannot be posted, keep this key safe: it is the only way to claim the funds."));
+    var sub = cmEl("p", "cm-muted",
+      "Claim wallet: " + (info.claimAddress || addressFromPrivateKey(info.claimKey)));
+    modal.body.appendChild(sub);
+    var keyInput = cmEl("input", "cm-input");
+    keyInput.type = "text";
+    keyInput.readOnly = true;
+    keyInput.value = info.claimKey;
+    keyInput.spellcheck = false;
+    modal.body.appendChild(keyInput);
+    modal.body.appendChild(cmEl("p", "cm-muted",
+      "Anyone with this key can move the airdrop funds on " +
+      (walletChainByKey(info.chainKey) ? walletChainByKey(info.chainKey).name : info.chainKey) +
+      ". Do not post it in plain chat."));
+
+    var close = cmEl("button", "cm-btn", "Close");
+    close.type = "button";
+    close.onclick = closeModal;
+
+    var copy = cmEl("button", "cm-btn primary", "Copy key");
+    copy.type = "button";
+    copy.onclick = function () {
+      copyText(info.claimKey).then(function (ok) {
+        toastMsg(ok ? "Claim key copied" : "Could not copy — select the key manually");
+      });
+    };
+
+    modal.actions.appendChild(close);
+    modal.actions.appendChild(copy);
+  }
+
+  function createAirdrop(options, peer, slug) {
+    if (!state) return Promise.reject(new Error("Plugin is not ready yet"));
+    if (!walletSupported()) return Promise.reject(new Error("This device cannot sign transactions"));
+    var chain = walletChainByKey(options && options.chainKey);
+    if (!chain) return Promise.reject(new Error("Choose a network"));
+    var token = options.token || null;
+    var amount = options.amountRaw;
+    if (!amount || amount <= wConst().Z) return Promise.reject(new Error("Enter an amount"));
+    if (!state.wallet && !ensureWallet()) {
+      return Promise.reject(new Error("Create a wallet first"));
+    }
+
+    var claim = makeWallet();
+    if (!claim) return Promise.reject(new Error("Could not create a temporary claim wallet"));
+
+    var info = {
+      chainKey: chain.key,
+      claimKey: claim.privateKey,
+      claimAddress: claim.address,
+      amount: String(options.amountText || "").replace(/,/g, ""),
+      amountRaw: amount,
+      decimals: token ? token.decimals : chain.native.decimals,
+      symbol: token ? token.symbol : chain.native.symbol,
+      tokenAddress: token ? token.address : "",
+      fundingTx: "",
+      stipendTx: ""
+    };
+    if (!/^\d+(\.\d+)?$/.test(info.amount)) {
+      info.amount = formatUnits(amount, info.decimals);
+    }
+
+    return rpcOne(chain, "eth_gasPrice", []).then(function (gasPriceHex) {
+      var gasPrice = hexToBig(gasPriceHex);
+      var stipend = gasPrice * wBI(token ? 130000 : 40000);
+      if (token) {
+        return sendTokenOnChain({
+          chainKey: chain.key,
+          token: null,
+          to: claim.address,
+          amountRaw: stipend,
+          amountText: formatUnits(stipend, chain.native.decimals)
+        }).then(function (fund) {
+          info.stipendTx = fund.tx;
+          return sendTokenOnChain({
+            chainKey: chain.key,
+            token: token,
+            to: claim.address,
+            amountRaw: amount,
+            amountText: info.amount
+          });
+        }).then(function (fund) {
+          info.fundingTx = fund.tx;
+          return info;
+        });
+      }
+
+      return sendTokenOnChain({
+        chainKey: chain.key,
+        token: null,
+        to: claim.address,
+        amountRaw: amount + stipend,
+        amountText: formatUnits(amount + stipend, chain.native.decimals)
+      }).then(function (fund) {
+        info.fundingTx = fund.tx;
+        return info;
+      });
+    }).catch(function (error) {
+      if (info.stipendTx || info.fundingTx) {
+        error.airdropInfo = info;
+      }
+      throw error;
+    });
+  }
+
+  function claimAirdropById(messageId) {
+    if (!state || !ui.peer) return;
+    if (ui.mode !== "thread") return;
+    if (ui.peer === "community" && isAiRoom()) {
+      toastMsg("Airdrops can't be claimed in the AI Room. Open another room or a direct chat.");
+      return;
+    }
+    var thread = getThread(ui.peer, false);
+    if (!thread) return;
+    var message = null;
+    for (var i = 0; i < thread.messages.length; i += 1) {
+      if (thread.messages[i].id === messageId) {
+        message = thread.messages[i];
+        break;
+      }
+    }
+    if (!message || !message.airdrop) return;
+    var airdrop = message.airdrop;
+    if (airdrop.claimed || airdrop.claimedTx) {
+      toastMsg("This airdrop has already been claimed");
+      return;
+    }
+    if (ui.claimingAirdrop) {
+      toastMsg("A claim is already in progress");
+      return;
+    }
+    if (!walletSupported()) {
+      toastMsg("This device cannot sign transactions. Update Android System WebView.");
+      return;
+    }
+    if (!state.wallet && !ensureWallet()) {
+      toastMsg("Could not create a wallet on this device");
+      return;
+    }
+
+    var chain = walletChainByKey(airdrop.chain);
+    if (!chain) {
+      toastMsg("This airdrop uses a network this version does not support");
+      return;
+    }
+    var claimant = state.wallet.address;
+    var claimAddress = addressFromPrivateKey(airdrop.claimKey);
+    if (!claimAddress) {
+      toastMsg("This airdrop's claim key is damaged");
+      return;
+    }
+
+    confirmDialog(
+      "Claim airdrop",
+      "Claim " + airdrop.amount + " " + airdrop.symbol + " on " + chain.name + " to your wallet " +
+        claimant + "?\n\nThis signs a transfer from the airdrop's temporary wallet. It cannot be undone, and only the first claim succeeds.",
+      "Claim now",
+      function () {
+        var amountRaw;
+        try {
+          amountRaw = parseUnits(airdrop.amount, airdrop.decimals);
+        } catch (error) {
+          toastMsg(error && error.message ? error.message : "The airdrop amount is invalid");
+          return;
+        }
+        var token = airdrop.tokenAddress
+          ? { address: airdrop.tokenAddress, symbol: airdrop.symbol, decimals: airdrop.decimals }
+          : null;
+        var peer = ui.peer;
+        ui.claimingAirdrop = true;
+        toastMsg("Claiming " + airdrop.amount + " " + airdrop.symbol + " on " + chain.name + "…", 9000);
+        sendTokenOnChain({
+          chainKey: chain.key,
+          from: claimAddress,
+          privateKey: airdrop.claimKey,
+          token: token,
+          to: claimant,
+          amountRaw: amountRaw,
+          amountText: airdrop.amount
+        }).then(function (result) {
+          airdrop.claimed = true;
+          airdrop.claimedTx = result.tx;
+          saveState();
+          toastMsg("✅ Claimed " + result.amount + " " + result.symbol + " on " +
+            result.chainName + " · fee " + result.fee + " " + result.nativeSymbol, 8000);
+          resetWalletView();
+          if ($root && pageRef && pageRef.isConnected) {
+            if (ui.mode === "tabs" && ui.tab === "me") render();
+            refreshWallet(true);
+          }
+          if (ui.mode === "thread" && ui.peer === peer) renderThreadMessages();
+        }).catch(function (error) {
+          toastMsg("Airdrop not claimed: " + (error && error.message ? error.message : String(error)), 8000);
+        }).then(function () {
+          ui.claimingAirdrop = false;
+        });
+      },
+      false
+    );
+  }
+
+  function postAirdropMessage(info, peer, slug) {
+    if (!state || !info || !peer) return;
+    if (peer === "community" && (isAiRoom() || (slug && roomSlug() !== slug))) {
+      showAirdropKey(info);
+      return;
+    }
+    var thread = getThread(peer, true);
+    if (!thread) return;
+
+    var message = {
+      id: uid(),
+      from: state.user.id,
+      name: state.user.name,
+      text: airdropText({
+        amount: info.amount,
+        symbol: info.symbol,
+        chain: info.chainKey
+      }),
+      airdrop: {
+        chain: info.chainKey,
+        claimKey: info.claimKey,
+        amount: info.amount,
+        decimals: info.decimals,
+        symbol: info.symbol,
+        tokenAddress: info.tokenAddress || "",
+        fundingTx: info.fundingTx || "",
+        claimed: false,
+        claimedTx: ""
+      },
+      ts: Date.now(),
+      mine: true,
+      status: "sending"
+    };
+    thread.messages.push(message);
+    thread.lastTs = message.ts;
+    thread.unread = 0;
+    saveState();
+    if (ui.mode === "thread" && ui.peer === peer) renderThreadMessages(true);
+    updateSidebar();
+
+    var useSlug = slug || roomSlug();
+    var topic = peer === "community" ? topicFor(useSlug) : dmTopicFor(peer);
+    deliverMessage(peer, message, topic, useSlug)
+      .then(function () {
+        message.status = "sent";
+        saveState();
+        setStatus("online");
+        if (ui.mode === "thread" && ui.peer === peer) renderThreadMessages();
+        updateSidebar();
+      })
+      .catch(function (error) {
+        message.status = "failed";
+        saveState();
+        if (ui.mode === "thread" && ui.peer === peer) renderThreadMessages();
+        updateSidebar();
+        var reason = error && error.message ? error.message : "";
+        toastMsg(reason
+          ? "Airdrop funded, but the chat message could not be posted. Tap it to retry. (" + reason + ")"
+          : "Airdrop funded, but the chat message could not be posted. Tap it to retry.", 7000);
+        showAirdropKey(info);
       });
   }
 
@@ -3053,6 +3384,35 @@
       "</div>";
   }
 
+  function airdropHTML(airdrop, message) {
+    var chain = walletChainByKey(airdrop.chain);
+    var claimed = !!airdrop.claimed || !!airdrop.claimedTx;
+    var funding = airdrop.fundingTx && chain ? chain.explorer + airdrop.fundingTx : "";
+    var claimedLink = airdrop.claimedTx && chain ? chain.explorer + airdrop.claimedTx : "";
+    var who = ui.peer === "community"
+      ? "Anyone in this room can claim it"
+      : "Only this chat can claim it";
+
+    return '<div class="cm-airdrop">' +
+      '<div class="cm-airdrop-top"><span class="cm-airdrop-gift">🎁</span>' +
+        '<b>' + escapeHTML(airdrop.amount + " " + airdrop.symbol) + "</b></div>" +
+      '<div class="cm-airdrop-sub">' + escapeHTML(chain ? chain.name : airdrop.chain) +
+        " · " + (claimed ? "Claimed" : who) + "</div>" +
+      (claimed
+        ? '<div class="cm-airdrop-note">This airdrop has been claimed.</div>'
+        : '<button type="button" class="cm-airdrop-btn" data-action="claim-airdrop" data-id="' +
+          escapeHTML(message.id) + '">Claim to my wallet</button>') +
+      (claimedLink
+        ? '<button type="button" class="cm-token-link" data-action="open-tx" data-url="' +
+          escapeHTML(claimedLink) + '">Claim transaction ↗</button>'
+        : "") +
+      (funding
+        ? '<button type="button" class="cm-token-link" data-action="open-tx" data-url="' +
+          escapeHTML(funding) + '">Funding transaction ↗</button>'
+        : "") +
+      "</div>";
+  }
+
   function messageHTML(message) {
     var mine = !!message.mine;
     var isAi = message.from === AI_ID;
@@ -3092,7 +3452,10 @@
     if (message.token) {
       bubble += tokenHTML(message.token);
     }
-    if (message.text && !message.token && !(message.image && message.text === "📷 Photo")) {
+    if (message.airdrop) {
+      bubble += airdropHTML(message.airdrop, message);
+    }
+    if (message.text && !message.token && !message.airdrop && !(message.image && message.text === "📷 Photo")) {
       bubble += '<div class="cm-text">' + formatMessageText(message.text) + "</div>";
     }
     if (!bubble) bubble = '<div class="cm-text">📷 Photo</div>';
@@ -3101,7 +3464,8 @@
       (isAi ? " cm-msg-ai" : "") + '" data-msg-id="' +
       escapeHTML(message.id) + '">' + avatar +
       '<div class="cm-bubblewrap">' + author +
-        '<div class="cm-bubble' + (message.image ? " cm-bubble-media" : "") + '">' + bubble + "</div>" +
+        '<div class="cm-bubble' + (message.image ? " cm-bubble-media" : "") +
+          (message.airdrop ? " cm-bubble-airdrop" : "") + '">' + bubble + "</div>" +
         '<div class="cm-msgmeta"><span>' + escapeHTML(formatClock(message.ts)) + "</span>" + status + "</div>" +
       "</div></div>";
   }
@@ -3488,6 +3852,8 @@
       pickImage();
     } else if (action === "send-token") {
       openSendTokenModal({ post: true });
+    } else if (action === "claim-airdrop") {
+      claimAirdropById(target.dataset.id);
     } else if (action === "open-tx") {
       openExplorerLink(target.dataset.url);
     } else if (action === "view-image") {
@@ -4525,6 +4891,8 @@
     }
 
     var peerAtOpen = post ? ui.peer : null;
+    var slugAtOpen = post && peerAtOpen === "community" ? roomSlug() : "";
+    var delivery = "send";
     var modal = openModal(post ? "Send tokens in this chat" : "Send tokens");
 
     if (post) {
@@ -4532,12 +4900,28 @@
       if (peerAtOpen === "community") {
         where = "You are in " + roomInfo(state.settings.room).name +
           ". A room has no shared wallet, so paste the wallet address of the person you want to pay below. " +
-          "The tokens go on-chain to that address; everyone in the room only sees the encrypted receipt.";
+          "The tokens go on-chain to that address; everyone in the room only sees the encrypted receipt. " +
+          "Choose Airdrop instead to let the first room member claim the tokens to their own wallet.";
       } else {
         where = "This sends tokens on-chain to your friend's wallet address. " +
-          "If you save their address in Chat options it will be filled in for you next time.";
+          "If you save their address in Chat options it will be filled in for you next time. " +
+          "Choose Airdrop instead to let them claim the tokens to their own wallet.";
       }
       modal.body.appendChild(cmEl("p", "cm-muted cm-tokeninfo", where));
+
+      var deliveryField = cmEl("div", "cm-field");
+      deliveryField.appendChild(cmEl("label", "cm-label", "Delivery"));
+      var deliverySelect = cmEl("select", "cm-input cm-select");
+      var sendOption = document.createElement("option");
+      sendOption.value = "send";
+      sendOption.textContent = "Send to a wallet address";
+      var airdropOption = document.createElement("option");
+      airdropOption.value = "airdrop";
+      airdropOption.textContent = "Airdrop — first person to claim it";
+      deliverySelect.appendChild(sendOption);
+      deliverySelect.appendChild(airdropOption);
+      deliveryField.appendChild(deliverySelect);
+      modal.body.appendChild(deliveryField);
     }
 
     var chainField = cmEl("div", "cm-field");
@@ -4613,7 +4997,10 @@
       var balance = walletAssetBalance(active.key, asset.symbol);
       info.textContent = "Available: " +
         (balance ? balance.amount + " " + asset.symbol : "not loaded — refresh the wallet first") +
-        "\nNetwork fee is paid in " + active.native.symbol + ".";
+        "\nNetwork fee is paid in " + active.native.symbol + "." +
+        (post && delivery === "airdrop"
+          ? "\nAirdrop funding also pays a small gas stipend so the claimer can move the funds."
+          : "");
     }
 
     function fillAssets() {
@@ -4633,7 +5020,10 @@
       updateInfo();
     }
 
-    chainSelect.onchange = fillAssets;
+    chainSelect.onchange = function () {
+      fillAssets();
+      applyDeliveryMode();
+    };
     assetSelect.onchange = updateInfo;
     fillAssets();
 
@@ -4643,12 +5033,29 @@
 
     var send = cmEl("button", "cm-btn primary", "Send");
     send.type = "button";
+
+    function applyDeliveryMode() {
+      delivery = deliverySelect ? String(deliverySelect.value || "send") : "send";
+      var isAirdrop = post && delivery === "airdrop";
+      toField.style.display = isAirdrop ? "none" : "";
+      note.textContent = isAirdrop
+        ? "Airdrops use a temporary wallet funded by you. The first person in this chat to claim gets the funds. " +
+          "Unclaimed airdrops stay in that temporary wallet, so keep the claim key if the chat card cannot be posted. " +
+          "On-chain transfers are public and cannot be undone."
+        : "The transfer is signed on this phone and sent to the blockchain. It cannot be undone. " +
+          "The chat note is end-to-end encrypted, but the transfer itself is public on the blockchain.";
+      send.textContent = isAirdrop ? "Create airdrop" : "Send";
+      updateInfo();
+    }
+    if (deliverySelect) deliverySelect.onchange = applyDeliveryMode;
+
     send.onclick = function () {
       var active = currentChain();
       var asset = currentAsset();
+      var isAirdrop = post && delivery === "airdrop";
       var to = String(toInput.value || "").trim();
       var amountText = String(amountInput.value || "").trim();
-      if (!isAddress(to)) {
+      if (!isAirdrop && !isAddress(to)) {
         toastMsg("Enter a valid 0x wallet address (42 characters)");
         return;
       }
@@ -4663,13 +5070,42 @@
 
       modal.close();
       confirmDialog(
-        "Confirm token transfer",
-        "Send " + amountText + " " + asset.symbol + " on " + active.name + " to " +
-          checksumAddress(to) + "?\n\nThis on-chain transfer cannot be undone. The network fee is paid in " +
-          active.native.symbol + ".",
-        "Send now",
+        isAirdrop ? "Confirm airdrop" : "Confirm token transfer",
+        isAirdrop
+          ? "Create an airdrop of " + amountText + " " + asset.symbol + " on " + active.name +
+            "?\n\nThe first person in this chat to claim gets the tokens. A temporary wallet is funded on-chain, " +
+            "and this cannot be undone. Network fees are paid in " + active.native.symbol + "."
+          : "Send " + amountText + " " + asset.symbol + " on " + active.name + " to " +
+            checksumAddress(to) + "?\n\nThis on-chain transfer cannot be undone. The network fee is paid in " +
+            active.native.symbol + ".",
+        isAirdrop ? "Create airdrop" : "Send now",
         function () {
           ui.sendingToken = true;
+          if (isAirdrop) {
+            toastMsg("Funding the airdrop on " + active.name + "…", 9000);
+            createAirdrop({
+              chainKey: active.key,
+              token: asset.native ? null : asset,
+              amountRaw: amountRaw,
+              amountText: amountText
+            }, peerAtOpen, slugAtOpen).then(function (info) {
+              postAirdropMessage(info, peerAtOpen, slugAtOpen);
+              resetWalletView();
+              if ($root && pageRef && pageRef.isConnected) {
+                if (ui.mode === "tabs" && ui.tab === "me") render();
+                refreshWallet(true);
+              }
+            }).catch(function (error) {
+              toastMsg("Airdrop not created: " + (error && error.message ? error.message : String(error)), 9000);
+              if (error && error.airdropInfo) {
+                showAirdropKey(error.airdropInfo,
+                  "Funding started but did not finish. Keep this key: anything already funded sits in this temporary wallet.");
+              }
+            }).then(function () {
+              ui.sendingToken = false;
+            });
+            return;
+          }
           toastMsg("Signing and sending on " + active.name + "…", 9000);
           sendTokenOnChain({
             chainKey: active.key,
@@ -4695,6 +5131,8 @@
         true
       );
     };
+
+    applyDeliveryMode();
 
     modal.actions.appendChild(cancel);
     modal.actions.appendChild(send);
