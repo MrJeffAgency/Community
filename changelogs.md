@@ -2,6 +2,11 @@
 
 ## 1.5.0
 - Changed the plugin ID to **Community.Chat** and added the GitHub repository link (`https://github.com/MrJeffAgency/Community/tree/main`) to the plugin manifest. Because the ID changed, remove the old `mrjeffagency.community` build before installing this one.
+- The wallet is now **Celo only**. BNB Smart Chain, Polygon and Ethereum support were removed.
+- Added **BTC** to the wallet using the Celo bridged WBTC contract `0x8aC2901Dd8A1F17a1A4768A6bA4C3751e3995B2D` (8 decimals).
+- Public preset rooms can only send **HDO** in chat. Private room codes and direct chats can send **CELO, USDT, USDC, HDO and BTC**. The wallet tab can still send every supported wallet asset, including G$.
+- Added a blue **verified badge** for profile `CM-6S29-CA2X`, shown in chats, contacts and profile screens.
+- Added a **Verified badge** card in the People tab with a **Message the developer** button. Users who need a badge are told to contact `CM-6S29-CA2X` and include their own profile ID.
 - Added **room airdrops**: in a room or direct chat, choose Airdrop and the first person to claim gets the funds in their own wallet.
 - Airdrops use a temporary claim wallet funded on-chain. The encrypted gift card contains the claim key, so it never appears in plaintext on the relay.
 - Token airdrops include a native gas stipend so the claimer can move the tokens; native-coin airdrops fund the displayed amount plus a stipend.

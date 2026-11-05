@@ -1,6 +1,6 @@
 # Community Chat
 
-Community Chat is a private, local-first chat plugin for Acode with preset rooms, a built-in AI helper, direct chats, photo sharing, token transfers, room airdrops and a built-in multi-chain wallet.
+Community Chat is a private, local-first chat plugin for Acode with preset rooms, a built-in AI helper, direct chats, photo sharing, token transfers, room airdrops and a built-in Celo wallet.
 
 ## Features
 
@@ -12,9 +12,10 @@ Community Chat is a private, local-first chat plugin for Acode with preset rooms
 - **End-to-end encryption**: Relay messages are encrypted on your device. Rooms use AES-256-GCM with a key derived from the room code; direct chats use ECDH P-256 key exchange plus AES-256-GCM.
 - **Presence**: See who is online in the current room.
 - **Notifications**: Get a notification when a new message arrives.
-- **Multi-chain wallet**: Every user (new and existing) gets an EVM wallet, created on the phone. The **Me** tab shows the address and live balances on **Celo**, **BNB Smart Chain**, **Polygon** and **Ethereum**, including **G$**, **USDT**, **USDC** and **HDO**, with copy, refresh and private-key backup.
-- **Token transfers**: Send native coins or tokens to any `0x` wallet address from the wallet, or tap the 🪙 button in a room or direct chat to send and post an encrypted receipt card. Token sending is unavailable in the AI Room.
+- **Celo wallet**: Every user (new and existing) gets a Celo wallet, created on the phone. The **Me** tab shows the address and live balances for **CELO**, **G$**, **USDT**, **USDC**, **HDO** and **BTC** (bridged WBTC), with copy, refresh and private-key backup.
+- **Token transfers**: Send tokens to any `0x` wallet address from the wallet, or tap the 🪙 button in a room or direct chat to send and post an encrypted receipt card. Public preset rooms are HDO-only; private room codes and direct chats can send CELO, USDT, USDC, HDO and BTC. Token sending is unavailable in the AI Room.
 - **Room airdrops**: In a room or direct chat, choose **Airdrop** instead of a wallet address. The plugin funds a temporary claim wallet and posts an encrypted gift card; the first person to tap **Claim to my wallet** moves the tokens to their own address. Airdrops are unavailable in the AI Room.
+- **Verified badge**: Profile `CM-6S29-CA2X` is marked with a blue verified check. Anyone who needs a verified badge can message the developer at that ID from **People → Verified badge**.
 - **Encrypted backup**: Export your chats, contacts and wallet key protected by a passphrase (PBKDF2 + AES-256-GCM).
 - **Safety number**: In a direct chat, open Chat options and compare the safety number with your friend to confirm nobody is impersonating them.
 
@@ -40,12 +41,14 @@ Tap a room chip in the **Chats** tab to switch rooms. You can also set a custom 
 4. Tap the photo button in the composer to send an image, or the 🪙 button to send tokens — or create an airdrop — in a room or direct chat (not in the AI Room).
 5. In the **AI Room**, type a question and Lucky AI will reply.
 
-## Multi-chain wallet
+## Celo wallet
 
 - A wallet is created automatically the first time you open v1.3.0 or newer (existing users included). The private key never leaves your phone.
-- Balances are read from public RPC endpoints for **Celo**, **BNB Smart Chain**, **Polygon** and **Ethereum** using only your address.
-- Supported assets include CELO, BNB, POL, ETH, G$ (GoodDollar on Celo and Ethereum), USDT (all four networks), USDC (Celo, Polygon, Ethereum) and HDO (Celo).
-- G$ uses the official GoodDollar contracts: `0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A` on Celo (18 decimals) and `0x67C5870b4A41D4Ebef24d2456547A03F1f3e094B` on Ethereum (2 decimals).
+- Balances are read from public Celo RPC endpoints using only your address. Celo is the only supported network.
+- Supported assets are **CELO** (native), **G$**, **USDT**, **USDC**, **HDO** and **BTC** (bridged WBTC on Celo).
+- G$ uses the official GoodDollar contract on Celo: `0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A` (18 decimals).
+- USDT uses `0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e` and USDC uses `0xcebA9300f2b948710d2653dD7B07f33A8B32118C` (both 6 decimals).
+- BTC uses the Celo bridged WBTC contract `0x8aC2901Dd8A1F17a1A4768A6bA4C3751e3995B2D` (8 decimals).
 - HDO uses `0x0b7e844Dd950558295eB5Ee7d5f57d18c1BEeb02` on Celo by default; it can be overridden in **Token settings**.
 - Already have a wallet? Tap **Import wallet** in the wallet card and paste its private key. The address and balances switch to that wallet, and your previous wallet's key stays under **Back up key**.
 - Resetting your chat identity does **not** delete the wallet. Importing a backup with a different wallet keeps your current one in the key backup list.
@@ -53,8 +56,9 @@ Tap a room chip in the **Chats** tab to switch rooms. You can also set a custom 
 ## Sending tokens
 
 - Tap **Send tokens** in the wallet, or the 🪙 button inside a room or direct chat.
-- Choose a network and token, paste the recipient's `0x` wallet address, enter an amount and confirm. The transaction is signed on the phone and broadcast directly to the selected network.
-- You need a small amount of the network's native coin (CELO, BNB, POL or ETH) to pay the network fee. The plugin checks the fee and your token balance before signing.
+- Choose a token, paste the recipient's `0x` wallet address, enter an amount and confirm. The transaction is signed on the phone and broadcast directly to Celo.
+- In **public preset rooms** (General, Game Room, Dev Room, Help Room) only **HDO** can be sent. In **private room codes** and **direct chats** you can send **CELO, USDT, USDC, HDO or BTC**. The wallet tab can send every supported wallet asset, including G$.
+- You need a small amount of **CELO** to pay the network fee. The plugin checks the fee and your token balance before signing.
 - When you send from a chat, an encrypted receipt card with the amount, recipient and a block-explorer link is posted to that room or direct chat. In a direct chat you can save your friend's wallet address in **Chat options** so it is filled in automatically.
 - Token sending is disabled in the **AI Room** because that room is a private conversation with Lucky AI, not with other users.
 - On-chain transfers are public and irreversible, even though the chat receipt is end-to-end encrypted. Double-check the address before confirming. Lose your key and the funds are gone.
@@ -67,7 +71,13 @@ Tap a room chip in the **Chats** tab to switch rooms. You can also set a custom 
 - The first person to tap **Claim to my wallet** signs a transfer from the temporary wallet to their own address. Later claims fail because the pot is empty. The claim transaction link is shown on the card.
 - Airdrop claim keys are inside the encrypted message payload only. They are never shown on the card or sent to the relay in plaintext. The sender can also open the fallback dialog to copy the claim key if posting the card fails.
 - Airdrops are unavailable in the **AI Room**.
-- Preset rooms use public room codes: anyone who knows the code can join and claim an airdrop posted there. Use a private room code for a private drop.
+- Preset rooms use public room codes: anyone who knows the code can join and claim an airdrop posted there. Airdrops in preset public rooms are **HDO only**. Use a private room code for a private drop with CELO, USDT, USDC, HDO or BTC.
+
+## Verified badge
+
+- The developer profile `CM-6S29-CA2X` shows a blue verified check next to the name.
+- If you need a verified badge, open **People → Verified badge** and tap **Message the developer**, or start a direct chat with `CM-6S29-CA2X`.
+- Include your own profile ID (`CM-XXXX-XXXX`) in the message so the developer can identify you.
 
 ## Privacy
 

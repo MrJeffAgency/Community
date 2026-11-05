@@ -634,6 +634,22 @@
   text-overflow: ellipsis;
 }
 
+.cm-verified {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: #1d9bf0;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+  vertical-align: 1px;
+}
+
 .cm-profile-sub {
   margin-top: 2px;
   font-size: 11.5px;
@@ -1338,7 +1354,7 @@
   margin-bottom: 8px;
 }
 
-/* ---- Multi-chain wallet and token messages (v1.4.0) ---- */
+/* ---- Celo wallet and token messages (v1.5.0) ---- */
 .cm-wchain {
   border-bottom: 1px solid var(--cm-border, rgba(127, 127, 127, 0.18));
 }

@@ -31,6 +31,9 @@
   var AI_ID = "CM-AI00-0000";
   var AI_NAME = "Lucky AI";
   var AI_WELCOME_ID = "ai-welcome-v1";
+  var DEV_ID = "CM-6S29-CA2X";
+  var DEV_NAME = "Community Dev";
+  var VERIFIED_IDS = [DEV_ID];
 
   var ENC_VERSION = "aes-gcm-v1";
   var ENC_AAD_ROOM = "acode-community-room-v1";
@@ -834,6 +837,20 @@
     return contact.alias || contact.name || defaultName(contact.id);
   }
 
+  function isVerifiedId(id) {
+    var normalized = normalizeId(id);
+    return !!normalized && VERIFIED_IDS.indexOf(normalized) !== -1;
+  }
+
+  function verifiedBadgeHTML(id) {
+    if (!isVerifiedId(id)) return "";
+    return '<span class="cm-verified" title="Verified profile" aria-label="Verified profile">✓</span>';
+  }
+
+  function verifiedProfileNameHTML(id, name) {
+    return escapeHTML(name == null ? "" : name) + verifiedBadgeHTML(id);
+  }
+
   function contactFor(id) {
     return (state && state.contacts && state.contacts[id]) || null;
   }
@@ -891,12 +908,13 @@
   var WALLET_REFRESH_MS = 30000;
   var MAX_WALLET_ARCHIVE = 20;
 
-  /* Token contracts. G$ (GoodDollar) is on Celo (18 decimals) and Ethereum
-     (2 decimals). USDT and USDC use the canonical contracts on each chain. */
+  /* Token contracts. Community Chat now uses Celo only. G$ (GoodDollar)
+     and the bridged BTC token use their official Celo contracts. */
   var GDOLLAR_CELO = "0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A";
-  var GDOLLAR_ETH = "0x67C5870b4A41D4Ebef24d2456547A03F1f3e094B";
   var USDT_TOKEN = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e";
   var USDC_CELO = "0xcebA9300f2b948710d2653dD7B07f33A8B32118C";
+  /* Wrapped BTC bridged to Celo (Superbridge), 8 decimals. */
+  var BTC_CELO = "0x8aC2901Dd8A1F17a1A4768A6bA4C3751e3995B2D";
   /* HDO token contract on Celo. Every user gets this by default; a user can
      override it in Wallet > Token settings. */
   var HDO_TOKEN_DEFAULT = "0x0b7e844Dd950558295eB5Ee7d5f57d18c1BEeb02";
@@ -913,46 +931,16 @@
         { symbol: "G$", address: GDOLLAR_CELO, decimals: 18 },
         { symbol: "USDT", address: USDT_TOKEN, decimals: 6 },
         { symbol: "USDC", address: USDC_CELO, decimals: 6 },
-        { symbol: "HDO", address: HDO_TOKEN_DEFAULT, decimals: 18, custom: "hdo" }
-      ]
-    },
-    {
-      key: "bsc",
-      name: "BNB Smart Chain",
-      chainId: 56,
-      native: { symbol: "BNB", decimals: 18 },
-      rpcs: ["https://bsc-dataseed.bnbchain.org", "https://bsc-rpc.publicnode.com"],
-      explorer: "https://bscscan.com/tx/",
-      tokens: [
-        { symbol: "USDT", address: "0x55d398326f99059fF775485246999027B3197955", decimals: 18 }
-      ]
-    },
-    {
-      key: "polygon",
-      name: "Polygon",
-      chainId: 137,
-      native: { symbol: "POL", decimals: 18 },
-      rpcs: ["https://polygon-bor-rpc.publicnode.com", "https://polygon.drpc.org"],
-      explorer: "https://polygonscan.com/tx/",
-      tokens: [
-        { symbol: "USDT", address: "0xc2132D05D31c914a87C6611C10748aeb04B58e8f", decimals: 6 },
-        { symbol: "USDC", address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", decimals: 6 }
-      ]
-    },
-    {
-      key: "ethereum",
-      name: "Ethereum",
-      chainId: 1,
-      native: { symbol: "ETH", decimals: 18 },
-      rpcs: ["https://ethereum-rpc.publicnode.com", "https://eth.drpc.org"],
-      explorer: "https://etherscan.io/tx/",
-      tokens: [
-        { symbol: "G$", address: GDOLLAR_ETH, decimals: 2 },
-        { symbol: "USDT", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
-        { symbol: "USDC", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 }
+        { symbol: "HDO", address: HDO_TOKEN_DEFAULT, decimals: 18, custom: "hdo" },
+        { symbol: "BTC", address: BTC_CELO, decimals: 8 }
       ]
     }
   ];
+
+  /* Public preset rooms use HDO for chat transfers. Private room codes and
+     direct chats can send the native coin and the listed tokens. */
+  var PUBLIC_ROOM_TOKEN = "HDO";
+  var PRIVATE_CHAT_TOKENS = ["USDT", "USDC", "HDO", "BTC"];
 
   function walletChainByKey(key) {
     for (var i = 0; i < WALLET_CHAINS.length; i += 1) {
@@ -970,6 +958,23 @@
       return token;
     }).filter(function (token) {
       return !!token.address;
+    });
+  }
+
+  function isPresetRoom(value) {
+    var slug = slugFor(value);
+    for (var i = 0; i < ROOMS.length; i += 1) {
+      if (ROOMS[i].slug === slug) return true;
+    }
+    return false;
+  }
+
+  function chatTokenOptions(chain, scope) {
+    var tokens = chainTokens(chain);
+    if (scope === "all") return tokens;
+    var allowed = scope === "public" ? [PUBLIC_ROOM_TOKEN] : PRIVATE_CHAT_TOKENS;
+    return tokens.filter(function (token) {
+      return allowed.indexOf(token.symbol) !== -1;
     });
   }
 
@@ -3085,7 +3090,7 @@
       avatar.textContent = contact ? contact.emoji : "🙂";
       avatar.style.setProperty("--cm-avatar-bg", colorFor(ui.peer));
     }
-    if (name) name.textContent = contact ? displayName(contact) : ui.peer;
+    if (name) name.innerHTML = verifiedProfileNameHTML(ui.peer, contact ? displayName(contact) : ui.peer);
     if (sub) {
       var onlineNow = isOnline(contact);
       sub.innerHTML = (onlineNow
@@ -3275,7 +3280,7 @@
       "</span>" +
       '<span class="cm-rowmain">' +
         '<span class="cm-rownames">' +
-          '<span class="cm-rowname">' + escapeHTML(name) + "</span>" +
+          '<span class="cm-rowname">' + verifiedProfileNameHTML(isCommunity ? "" : peer, name) + "</span>" +
           '<span class="cm-rowtime">' + escapeHTML(formatListTime(lastTs)) + "</span>" +
         "</span>" +
         '<span class="cm-rowpreview">' + escapeHTML(previewText(thread, peer)) + "</span>" +
@@ -3439,7 +3444,7 @@
         escapeHTML(emoji) + "</span>"
       : "";
     var author = showAuthor
-      ? '<div class="cm-msgname">' + escapeHTML(name) + "</div>"
+      ? '<div class="cm-msgname">' + verifiedProfileNameHTML(message.from, name) + "</div>"
       : "";
 
     var bubble = "";
@@ -3487,7 +3492,7 @@
     return '<div class="cm-thread-empty">' +
       '<span class="cm-avatar cm-avatar-lg" style="--cm-avatar-bg:' + colorFor(ui.peer) + '">' +
       escapeHTML(contact ? contact.emoji : "🙂") + "</span>" +
-      "<h3>" + escapeHTML(contact ? displayName(contact) : ui.peer) + "</h3>" +
+      "<h3>" + verifiedProfileNameHTML(contact ? contact.id : ui.peer, contact ? displayName(contact) : ui.peer) + "</h3>" +
       "<p>This is the beginning of your direct chat. Say hi 👋</p>" +
       "</div>";
   }
@@ -3520,7 +3525,7 @@
           '<span class="cm-avatar cm-avatar-lg" style="--cm-avatar-bg:' + colorFor(state.user.id) + '">' +
             escapeHTML(state.user.emoji) + "</span>" +
           '<div class="cm-profile-main">' +
-            '<div class="cm-profile-name">' + escapeHTML(state.user.name) + "</div>" +
+            '<div class="cm-profile-name">' + verifiedProfileNameHTML(state.user.id, state.user.name) + "</div>" +
             '<div class="cm-profile-sub">This is you</div>' +
           "</div>" +
           '<button type="button" class="cm-chip" data-action="copy-id">Copy ID</button>' +
@@ -3538,6 +3543,20 @@
           '<input class="cm-input" id="cm-add-name" name="name" type="text" placeholder="e.g. Alex" maxlength="40">' +
           '<div class="cm-button-row"><button type="submit" class="cm-btn primary">Add contact</button></div>' +
         "</form>" +
+      "</div>" +
+
+      '<div class="cm-card">' +
+        "<h3>Verified badge</h3>" +
+        '<p class="cm-card-p">A blue check marks a verified profile. ' +
+          (state.user.id === DEV_ID
+            ? "Your developer profile is verified."
+            : "If you need a verified badge, message the developer at <code>" + escapeHTML(DEV_ID) +
+              "</code>. Include your profile ID <code>" + escapeHTML(state.user.id) +
+              "</code> in the message so the developer can find you.") +
+        "</p>" +
+        (state.user.id === DEV_ID
+          ? ""
+          : '<div class="cm-button-row"><button type="button" class="cm-btn primary" data-action="message-dev">Message the developer</button></div>') +
       "</div>" +
 
       '<div class="cm-section-title">People you know <span>' + contacts.length + "</span></div>" +
@@ -3558,7 +3577,7 @@
         (online ? '<span class="cm-online-dot"></span>' : "") +
       "</span>" +
       '<span class="cm-rowmain">' +
-        '<span class="cm-rownames"><span class="cm-rowname">' + escapeHTML(displayName(contact)) + "</span></span>" +
+        '<span class="cm-rownames"><span class="cm-rowname">' + verifiedProfileNameHTML(contact.id, displayName(contact)) + "</span></span>" +
         '<span class="cm-rowpreview">' + escapeHTML(sub) + " · " + escapeHTML(contact.id) + "</span>" +
       "</span>" +
       '<span class="cm-rowactions">' +
@@ -3588,7 +3607,7 @@
           '<span class="cm-avatar cm-avatar-lg" style="--cm-avatar-bg:' + colorFor(state.user.id) + '">' +
             escapeHTML(state.user.emoji) + "</span>" +
           '<div class="cm-profile-main">' +
-            '<div class="cm-profile-name">' + escapeHTML(state.user.name) + "</div>" +
+            '<div class="cm-profile-name">' + verifiedProfileNameHTML(state.user.id, state.user.name) + "</div>" +
             '<div class="cm-profile-sub">Tap “Change avatar” to pick a new one</div>' +
           "</div>" +
           '<button type="button" class="cm-chip" data-action="avatar-next">Change avatar</button>' +
@@ -3658,7 +3677,7 @@
           " · Last sync: " + escapeHTML(lastSync) + "</p>" +
         '<p class="cm-muted">🔒 End-to-end encrypted. Room messages use AES-256-GCM with a key derived from the room code. Direct messages use ECDH P-256 key exchange plus AES-256-GCM, so only you and your friend can read them. The relay stores ciphertext, not your messages.</p>' +
         '<p class="cm-muted">Your private key stays on this phone and is only included in backups you export. Keep a backup if you reinstall Acode. Preset rooms use public room codes, so create your own private room code for sensitive chats. Lucky AI replies are stored only on this phone, but what you type in the AI Room is sent to luckyai-blush.vercel.app to get an answer.</p>' +
-        '<p class="cm-muted">Your multi-chain wallet key is created and stored on this phone. It is never sent to the relay, to friends or to Lucky AI. Balances are read from the public Celo, BNB Smart Chain, Polygon and Ethereum networks using only your address. You can send tokens to any 0x wallet address; transfers are signed on this phone.</p>' +
+        '<p class="cm-muted">Your Celo wallet key is created and stored on this phone. It is never sent to the relay, to friends or to Lucky AI. Balances are read from the public Celo network using only your address. You can send tokens to any 0x wallet address; transfers are signed on this phone.</p>' +
         (ui.lastError ? '<p class="cm-muted">Last connection error: ' + escapeHTML(ui.lastError) + "</p>" : "") +
       "</div>";
   }
@@ -3677,7 +3696,7 @@
         '<span class="cm-avatar cm-avatar-sm" style="--cm-avatar-bg:' + colorFor(state.user.id) + '">' +
           escapeHTML(state.user.emoji) + "</span>" +
         "<div style=\"min-width:0;flex:1 1 auto\">" +
-          "<b>" + escapeHTML(state.user.name) + "</b>" +
+          "<b>" + verifiedProfileNameHTML(state.user.id, state.user.name) + "</b>" +
           "<small>" + escapeHTML(state.user.id) + "</small>" +
         "</div>" +
       "</div>" +
@@ -3852,6 +3871,8 @@
       pickImage();
     } else if (action === "send-token") {
       openSendTokenModal({ post: true });
+    } else if (action === "message-dev") {
+      messageDeveloper();
     } else if (action === "claim-airdrop") {
       claimAirdropById(target.dataset.id);
     } else if (action === "open-tx") {
@@ -4180,8 +4201,25 @@
     toastMsg(existing ? "Contact updated" : "Contact added");
   }
 
-  function removeContact(id) {
+  function messageDeveloper() {
     if (!state) return;
+    if (state.user.id === DEV_ID) {
+      toastMsg("You are the verified developer profile");
+      return;
+    }
+    var contact = upsertContact(DEV_ID, DEV_NAME, "🛡️", false);
+    if (!contact) {
+      toastMsg("Could not open a chat with the developer");
+      return;
+    }
+    contact.auto = false;
+    if (!contact.alias && !contact.name) contact.name = DEV_NAME;
+    saveState();
+    openThread(DEV_ID);
+    toastMsg("Ask for a verified badge and include your profile ID " + state.user.id, 6500);
+  }
+
+  function removeContact(id) {    if (!state) return;
     var contactId = normalizeId(id);
     var contact = contactFor(contactId);
     if (!contact) return;
@@ -4356,7 +4394,7 @@
       '<span class="cm-avatar cm-avatar-lg" style="--cm-avatar-bg:' + colorFor(peer) + '">' +
         escapeHTML(contact ? contact.emoji : "🙂") + "</span>" +
       '<div class="cm-profile-main">' +
-        '<div class="cm-profile-name">' + escapeHTML(contact ? displayName(contact) : peer) + "</div>" +
+        '<div class="cm-profile-name">' + verifiedProfileNameHTML(peer, contact ? displayName(contact) : peer) + "</div>" +
         '<div class="cm-profile-sub">' + escapeHTML(peer) + " · " +
           (isOnline(contact) ? "online" : "offline") + "</div>" +
       "</div></div>" +
@@ -4718,7 +4756,7 @@
 
     var status;
     if (w.loading && !d) {
-      status = "Loading balances from 4 networks…";
+      status = "Loading balances from Celo…";
     } else if (w.error) {
       status = "Could not load balances (" + w.error + "). Tap Refresh.";
     } else if (d) {
@@ -4732,17 +4770,17 @@
   function walletCardHTML() {
     if (!state) return "";
     if (!walletSupported()) {
-      return '<div class="cm-card"><h3>Multi-chain wallet</h3>' +
+      return '<div class="cm-card"><h3>Celo wallet</h3>' +
         '<p class="cm-muted">This device’s WebView does not support the features a wallet needs (BigInt and secure random numbers). Update Android System WebView and reopen Acode.</p></div>';
     }
     if (!state.wallet) {
-      return '<div class="cm-card"><h3>Multi-chain wallet</h3>' +
+      return '<div class="cm-card"><h3>Celo wallet</h3>' +
         '<p>No wallet on this phone yet.</p>' +
         '<div class="cm-button-row"><button type="button" class="cm-btn primary" data-action="wallet-create">Create wallet</button></div></div>';
     }
     return '<div class="cm-card cm-wallet">' +
-      "<h3>Multi-chain wallet</h3>" +
-      '<p>One EVM address for <b>Celo</b>, <b>BNB Smart Chain</b>, <b>Polygon</b> and <b>Ethereum</b>. It was created on this phone and only you hold the key.</p>' +
+      "<h3>Celo wallet</h3>" +
+      '<p>Your wallet address on <b>Celo</b>. It was created on this phone and only you hold the key. Supported assets: CELO, G$, USDT, USDC, HDO and BTC.</p>' +
       '<div class="cm-idbox cm-addrbox"><code>' + escapeHTML(state.wallet.address) + "</code>" +
         '<button type="button" class="cm-chip" data-action="wallet-copy">Copy</button></div>' +
       '<div class="cm-wbal" data-role="wallet-balances">' + walletBalancesHTML() + "</div>" +
@@ -4762,7 +4800,7 @@
             escapeHTML((state.settings && state.settings.hdoToken) || HDO_TOKEN_DEFAULT) + '">' +
           '<button type="button" class="cm-btn primary" data-action="wallet-save-hdo">Save</button>' +
         "</div>" +
-        '<p class="cm-muted">HDO is read from the contract above on Celo. G$ (GoodDollar) uses the official contracts on Celo and Ethereum; USDT and USDC use the canonical contracts on each network.</p>' +
+        '<p class="cm-muted">HDO is read from the contract above on Celo. G$ (GoodDollar), USDT, USDC and bridged BTC use their official Celo contracts.</p>' +
       "</details>" +
       '<p class="cm-muted">Never share your private key. Back up your key: if you lose this phone without a backup, the funds are gone. A token transfer is public on its blockchain even when the chat note is encrypted.</p>' +
     "</div>";
@@ -4892,22 +4930,35 @@
 
     var peerAtOpen = post ? ui.peer : null;
     var slugAtOpen = post && peerAtOpen === "community" ? roomSlug() : "";
+    /* Public preset rooms are HDO-only. Private room codes and direct chats
+       can send CELO plus the private chat tokens. The wallet tab is open. */
+    var tokenScope = "all";
+    if (post) {
+      tokenScope = peerAtOpen === "community" && isPresetRoom(slugAtOpen) ? "public" : "private";
+    }
+    var allowNative = tokenScope !== "public";
     var delivery = "send";
     var modal = openModal(post ? "Send tokens in this chat" : "Send tokens");
 
     if (post) {
       var where;
+      var scopeLine;
       if (peerAtOpen === "community") {
         where = "You are in " + roomInfo(state.settings.room).name +
           ". A room has no shared wallet, so paste the wallet address of the person you want to pay below. " +
           "The tokens go on-chain to that address; everyone in the room only sees the encrypted receipt. " +
           "Choose Airdrop instead to let the first room member claim the tokens to their own wallet.";
+        scopeLine = tokenScope === "public"
+          ? "This is a public preset room, so only HDO can be sent here."
+          : "This is a private room code, so you can send CELO, USDT, USDC, HDO or BTC.";
       } else {
         where = "This sends tokens on-chain to your friend's wallet address. " +
           "If you save their address in Chat options it will be filled in for you next time. " +
           "Choose Airdrop instead to let them claim the tokens to their own wallet.";
+        scopeLine = "Direct chats can send CELO, USDT, USDC, HDO or BTC.";
       }
       modal.body.appendChild(cmEl("p", "cm-muted cm-tokeninfo", where));
+      modal.body.appendChild(cmEl("p", "cm-muted cm-tokeninfo", scopeLine));
 
       var deliveryField = cmEl("div", "cm-field");
       deliveryField.appendChild(cmEl("label", "cm-label", "Delivery"));
@@ -5006,17 +5057,27 @@
     function fillAssets() {
       var active = currentChain();
       assetSelect.innerHTML = "";
-      var nativeOption = document.createElement("option");
-      nativeOption.value = "native";
-      nativeOption.textContent = active.native.symbol + " (native)";
-      assetSelect.appendChild(nativeOption);
-      chainTokens(active).forEach(function (token) {
+      var preferred = "";
+      if (allowNative) {
+        var nativeOption = document.createElement("option");
+        nativeOption.value = "native";
+        nativeOption.textContent = active.native.symbol + " (native)";
+        assetSelect.appendChild(nativeOption);
+        preferred = "native";
+      }
+      var tokens = chatTokenOptions(active, tokenScope);
+      tokens.forEach(function (token) {
         var option = document.createElement("option");
         option.value = token.address;
         option.textContent = token.symbol;
         assetSelect.appendChild(option);
       });
-      assetSelect.value = "native";
+      if (tokenScope === "public") {
+        tokens.forEach(function (token) {
+          if (token.symbol === PUBLIC_ROOM_TOKEN) preferred = token.address;
+        });
+      }
+      assetSelect.value = preferred || (tokens.length ? tokens[0].address : "native");
       updateInfo();
     }
 
