@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0
+- Added a built-in Celo (EVM) wallet for every user. New users get one on first launch and existing users get one automatically when they update.
+- The Me tab shows the wallet address with live CELO, HDO and USDT balances, plus copy, refresh, private-key backup and HDO token settings.
+- Users can import an existing wallet by pasting its private key; the previous wallet is kept in the key backup list.
+- Passphrase-encrypted backups (PBKDF2 + AES-256-GCM); the plain backup is now labelled unsafe. Backups include the wallet key.
+- Importing a backup keeps your current wallet if the backup has a different one or none; resetting identity never deletes the wallet.
+- Messages are no longer sent as plaintext when WebCrypto is unavailable; sending is blocked with a clear message.
+- Added safety numbers in direct-chat options so friends can verify each other's keys.
+- Preset rooms now show “public room” in the header; the privacy notes explain that text typed in the AI Room is sent to the Lucky AI server.
+- Capped auto-added contacts to stop spam from filling local storage.
+
 ## 1.2.6
 - Version bump for plugin store resubmission.
 - Fixed the titlebar menu button not responding to taps.

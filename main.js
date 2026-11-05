@@ -19,7 +19,7 @@
    * ------------------------------------------------------------------ */
 
   var PLUGIN_ID = "mrjeffagency.community";
-  var VERSION = "1.2.6";
+  var VERSION = "1.3.0";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -49,6 +49,7 @@
   var MAX_IMAGES_PER_THREAD = 8;
   var MAX_IMAGE_CAPTION = 240;
   var MAX_AI_TEXT = 6000;
+  var MAX_AUTO_CONTACTS = 300;
 
   var ROOMS = [
     { slug: "general", name: "General", emoji: "💬", desc: "Say hello to everyone" },
@@ -107,7 +108,8 @@
     lastError: "",
     modal: null,
     aiBusy: false,
-    aiPending: 0
+    aiPending: 0,
+    wallet: { data: null, loading: false, error: "", at: 0 }
   };
 
   /* ------------------------------------------------------------------ *
@@ -434,10 +436,7 @@
     };
 
     if (!cryptoAvailable()) {
-      envelope.type = image ? "image" : "text";
-      envelope.text = text || "";
-      if (image) envelope.image = image;
-      return Promise.resolve(envelope);
+      return Promise.reject(new Error("Encryption is not available on this device, so the message was not sent."));
     }
 
     return ensureIdentityKeys().then(function (ok) {
@@ -807,6 +806,399 @@
     return out;
   }
 
+  /* ------------------------------------------------------------------ *
+   * Celo / EVM wallet
+   * ------------------------------------------------------------------ *
+   * Pure JavaScript: keccak-256 and secp256k1 key derivation so the plugin
+   * needs no libraries. BigInt is created with BigInt() calls (never `0n`
+   * literals) so an old WebView without BigInt only loses the wallet, not
+   * the whole plugin.
+   * ------------------------------------------------------------------ */
+
+  var CELO_CHAIN_ID = 42220;
+  var CELO_RPCS = ["https://forno.celo.org", "https://rpc.ankr.com/celo"];
+  /* HDO token contract on Celo. Every user gets this by default; a user can
+     override it in Wallet > Token settings. */
+  var HDO_TOKEN_DEFAULT = "0x0b7e844Dd950558295eB5Ee7d5f57d18c1BEeb02";
+  var USDT_TOKEN = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e";
+  var WALLET_REFRESH_MS = 30000;
+  var MAX_WALLET_ARCHIVE = 20;
+
+  var wBI = typeof BigInt === "function" ? BigInt : null;
+  var wK = null;
+
+  function walletSupported() {
+    return !!(wBI && window.crypto && typeof window.crypto.getRandomValues === "function");
+  }
+
+  function wConst() {
+    if (wK) return wK;
+    var B = wBI;
+    var rc = [
+      "0000000000000001", "0000000000008082", "800000000000808a", "8000000080008000",
+      "000000000000808b", "0000000080000001", "8000000080008081", "8000000000008009",
+      "000000000000008a", "0000000000000088", "0000000080008009", "000000008000000a",
+      "000000008000808b", "800000000000008b", "8000000000008089", "8000000000008003",
+      "8000000000008002", "8000000000000080", "000000000000800a", "800000008000000a",
+      "8000000080008081", "8000000000008080", "0000000080000001", "8000000080008008"
+    ].map(function (h) { return B("0x" + h); });
+    wK = {
+      Z: B(0), ONE: B(1), TWO: B(2), THREE: B(3),
+      M64: B("0xffffffffffffffff"),
+      RC: rc,
+      KR: [1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 2, 14, 27, 41, 56, 8, 25, 43, 62, 18, 39, 61, 20, 44],
+      KP: [10, 7, 11, 17, 18, 3, 5, 16, 8, 21, 24, 4, 15, 23, 19, 13, 12, 2, 20, 14, 22, 9, 6, 1],
+      P: B("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f"),
+      N: B("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"),
+      GX: B("0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
+      GY: B("0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8")
+    };
+    return wK;
+  }
+
+  function wRotl(x, n) {
+    var k = wConst();
+    var s = wBI(n);
+    return ((x << s) | (x >> (wBI(64) - s))) & k.M64;
+  }
+
+  function keccak256(bytes) {
+    var k = wConst();
+    var rate = 136;
+    var len = bytes.length;
+    var padded = new Uint8Array(Math.ceil((len + 1) / rate) * rate);
+    padded.set(bytes);
+    padded[len] ^= 0x01;
+    padded[padded.length - 1] ^= 0x80;
+
+    var s = [];
+    var i, j, x, y, r;
+    for (i = 0; i < 25; i += 1) s.push(k.Z);
+    var bc = [k.Z, k.Z, k.Z, k.Z, k.Z];
+
+    for (var off = 0; off < padded.length; off += rate) {
+      for (i = 0; i < rate / 8; i += 1) {
+        var lane = k.Z;
+        for (j = 7; j >= 0; j -= 1) {
+          lane = (lane << wBI(8)) | wBI(padded[off + i * 8 + j]);
+        }
+        s[i] = s[i] ^ lane;
+      }
+      for (r = 0; r < 24; r += 1) {
+        for (x = 0; x < 5; x += 1) {
+          bc[x] = s[x] ^ s[x + 5] ^ s[x + 10] ^ s[x + 15] ^ s[x + 20];
+        }
+        for (x = 0; x < 5; x += 1) {
+          var t = bc[(x + 4) % 5] ^ wRotl(bc[(x + 1) % 5], 1);
+          for (y = 0; y < 25; y += 5) s[y + x] = s[y + x] ^ t;
+        }
+        var cur = s[1];
+        for (i = 0; i < 24; i += 1) {
+          var pj = k.KP[i];
+          var keep = s[pj];
+          s[pj] = wRotl(cur, k.KR[i]);
+          cur = keep;
+        }
+        for (y = 0; y < 25; y += 5) {
+          for (x = 0; x < 5; x += 1) bc[x] = s[y + x];
+          for (x = 0; x < 5; x += 1) {
+            s[y + x] = bc[x] ^ ((bc[(x + 1) % 5] ^ k.M64) & bc[(x + 2) % 5]);
+          }
+        }
+        s[0] = s[0] ^ k.RC[r];
+      }
+    }
+
+    var out = new Uint8Array(32);
+    for (i = 0; i < 4; i += 1) {
+      var v = s[i];
+      for (j = 0; j < 8; j += 1) {
+        out[i * 8 + j] = Number(v & wBI(255));
+        v = v >> wBI(8);
+      }
+    }
+    return out;
+  }
+
+  function wMod(a, m) {
+    var r = a % m;
+    return r >= wConst().Z ? r : r + m;
+  }
+
+  function wInv(a, m) {
+    var k = wConst();
+    var lm = k.ONE, hm = k.Z, low = wMod(a, m), high = m;
+    while (low > k.ONE) {
+      var q = high / low;
+      var nm = hm - lm * q;
+      var nl = high - low * q;
+      hm = lm; lm = nm; high = low; low = nl;
+    }
+    return wMod(lm, m);
+  }
+
+  function wPointDouble(p) {
+    var k = wConst();
+    if (!p || p.y === k.Z) return null;
+    var l = wMod(k.THREE * p.x * p.x * wInv(k.TWO * p.y, k.P), k.P);
+    var x3 = wMod(l * l - k.TWO * p.x, k.P);
+    return { x: x3, y: wMod(l * (p.x - x3) - p.y, k.P) };
+  }
+
+  function wPointAdd(p, q) {
+    var k = wConst();
+    if (!p) return q;
+    if (!q) return p;
+    if (p.x === q.x) {
+      if (wMod(p.y + q.y, k.P) === k.Z) return null;
+      return wPointDouble(p);
+    }
+    var l = wMod((q.y - p.y) * wInv(q.x - p.x, k.P), k.P);
+    var x3 = wMod(l * l - p.x - q.x, k.P);
+    return { x: x3, y: wMod(l * (p.x - x3) - p.y, k.P) };
+  }
+
+  function wMulG(scalar) {
+    var k = wConst();
+    var result = null;
+    var addend = { x: k.GX, y: k.GY };
+    var n = scalar;
+    while (n > k.Z) {
+      if ((n & k.ONE) === k.ONE) result = wPointAdd(result, addend);
+      addend = wPointDouble(addend);
+      n = n >> k.ONE;
+    }
+    return result;
+  }
+
+  function bytesToHex(bytes) {
+    var out = "";
+    for (var i = 0; i < bytes.length; i += 1) {
+      out += (bytes[i] < 16 ? "0" : "") + bytes[i].toString(16);
+    }
+    return out;
+  }
+
+  function hexToBytes(hex) {
+    var clean = String(hex || "").replace(/^0x/i, "");
+    var out = new Uint8Array(clean.length / 2);
+    for (var i = 0; i < out.length; i += 1) {
+      out[i] = parseInt(clean.substr(i * 2, 2), 16);
+    }
+    return out;
+  }
+
+  function wPad32(bigValue) {
+    var hex = bigValue.toString(16);
+    while (hex.length < 64) hex = "0" + hex;
+    return hex;
+  }
+
+  function checksumAddress(addressHex) {
+    var lower = String(addressHex).replace(/^0x/i, "").toLowerCase();
+    var hash = bytesToHex(keccak256(utf8Bytes(lower)));
+    var out = "0x";
+    for (var i = 0; i < lower.length; i += 1) {
+      var ch = lower.charAt(i);
+      out += parseInt(hash.charAt(i), 16) >= 8 ? ch.toUpperCase() : ch;
+    }
+    return out;
+  }
+
+  function isHexKey(value) {
+    return typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
+  }
+
+  function isAddress(value) {
+    return typeof value === "string" && /^0x[0-9a-fA-F]{40}$/.test(value);
+  }
+
+  function addressFromPrivateKey(hexKey) {
+    var k = wConst();
+    if (!isHexKey(hexKey)) return "";
+    var d = wBI("0x" + hexKey);
+    if (d <= k.Z || d >= k.N) return "";
+    var pub = wMulG(d);
+    if (!pub) return "";
+    var raw = hexToBytes(wPad32(pub.x) + wPad32(pub.y));
+    var hash = keccak256(raw);
+    return checksumAddress(bytesToHex(hash.subarray(12)));
+  }
+
+  function createWalletKey() {
+    var k = wConst();
+    for (var attempt = 0; attempt < 16; attempt += 1) {
+      var bytes = new Uint8Array(32);
+      window.crypto.getRandomValues(bytes);
+      var hex = bytesToHex(bytes);
+      var d = wBI("0x" + hex);
+      if (d > k.Z && d < k.N) return hex;
+    }
+    return "";
+  }
+
+  function makeWallet() {
+    if (!walletSupported()) return null;
+    try {
+      var key = createWalletKey();
+      var address = key ? addressFromPrivateKey(key) : "";
+      if (!key || !address) return null;
+      return { address: address, privateKey: key, createdAt: Date.now() };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function cleanWallet(input) {
+    if (!input || typeof input !== "object" || !walletSupported()) return null;
+    var key = typeof input.privateKey === "string" ? input.privateKey.replace(/^0x/i, "").toLowerCase() : "";
+    if (!isHexKey(key)) return null;
+    var address = "";
+    try {
+      address = addressFromPrivateKey(key);
+    } catch (e) {
+      address = "";
+    }
+    if (!address) return null;
+    return { address: address, privateKey: key, createdAt: Number(input.createdAt) || Date.now() };
+  }
+
+  function cleanWalletArchive(list) {
+    var out = [];
+    if (!Array.isArray(list)) return out;
+    list.forEach(function (item) {
+      var w = cleanWallet(item);
+      if (w && out.length < MAX_WALLET_ARCHIVE) out.push(w);
+    });
+    return out;
+  }
+
+  function ensureWallet() {
+    if (!state || !walletSupported()) return false;
+    if (state.wallet && state.wallet.address && isHexKey(state.wallet.privateKey)) return true;
+    var wallet = makeWallet();
+    if (!wallet) return false;
+    state.wallet = wallet;
+    saveState();
+    return true;
+  }
+
+  function archiveWallet(wallet) {
+    if (!state || !wallet || !wallet.privateKey) return;
+    if (!Array.isArray(state.walletArchive)) state.walletArchive = [];
+    var exists = state.walletArchive.some(function (item) {
+      return item.privateKey === wallet.privateKey;
+    });
+    if (!exists) state.walletArchive.unshift(wallet);
+    state.walletArchive = state.walletArchive.slice(0, MAX_WALLET_ARCHIVE);
+  }
+
+  /* --- Celo balances (read-only JSON-RPC) --- */
+
+  function hdoTokenAddress() {
+    var custom = state && state.settings && state.settings.hdoToken;
+    if (isAddress(custom)) return custom;
+    return isAddress(HDO_TOKEN_DEFAULT) ? HDO_TOKEN_DEFAULT : "";
+  }
+
+  function rpcCall(calls) {
+    var body = JSON.stringify(calls);
+    var index = 0;
+    function attempt() {
+      if (index >= CELO_RPCS.length) return Promise.reject(new Error("Celo network is not reachable"));
+      var url = CELO_RPCS[index];
+      index += 1;
+      return fetchWithTimeout(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: body,
+        cache: "no-store"
+      }, 15000).then(function (response) {
+        if (!response.ok) throw new Error("RPC " + response.status);
+        return response.json();
+      }).then(function (json) {
+        if (!Array.isArray(json)) throw new Error("Unexpected RPC reply");
+        var byId = {};
+        json.forEach(function (item) {
+          if (item && item.id != null) byId[item.id] = item;
+        });
+        return byId;
+      }).catch(attempt);
+    }
+    return attempt();
+  }
+
+  function hexToBig(hex) {
+    var clean = String(hex || "").replace(/^0x/i, "");
+    return clean ? wBI("0x" + clean) : wConst().Z;
+  }
+
+  function formatUnits(raw, decimals) {
+    var k = wConst();
+    var base = k.ONE;
+    for (var i = 0; i < decimals; i += 1) base = base * wBI(10);
+    var whole = raw / base;
+    var frac = (raw % base).toString();
+    while (frac.length < decimals) frac = "0" + frac;
+    frac = frac.slice(0, 4).replace(/0+$/, "");
+    var wholeText = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return frac ? wholeText + "." + frac : wholeText;
+  }
+
+  function decodeAbiString(hex) {
+    var clean = String(hex || "").replace(/^0x/i, "");
+    if (!clean) return "";
+    try {
+      if (clean.length === 64) {
+        var b32 = hexToBytes(clean);
+        var end = b32.indexOf(0);
+        return utf8Text(end === -1 ? b32 : b32.subarray(0, end));
+      }
+      var len = parseInt(clean.substr(64, 64), 16);
+      if (!len || len > 64) return "";
+      return utf8Text(hexToBytes(clean.substr(128, len * 2)));
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function fetchWalletBalances() {
+    if (!state || !state.wallet) return Promise.resolve(null);
+    var holder = state.wallet.address.slice(2).toLowerCase();
+    var data = "0x70a08231" + "000000000000000000000000" + holder;
+    var hdo = hdoTokenAddress();
+    var calls = [
+      { jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: [state.wallet.address, "latest"] },
+      { jsonrpc: "2.0", id: 2, method: "eth_call", params: [{ to: USDT_TOKEN, data: data }, "latest"] },
+      { jsonrpc: "2.0", id: 3, method: "eth_call", params: [{ to: USDT_TOKEN, data: "0x95d89b41" }, "latest"] }
+    ];
+    if (hdo) {
+      calls.push({ jsonrpc: "2.0", id: 4, method: "eth_call", params: [{ to: hdo, data: data }, "latest"] });
+      calls.push({ jsonrpc: "2.0", id: 5, method: "eth_call", params: [{ to: hdo, data: "0x313ce567" }, "latest"] });
+      calls.push({ jsonrpc: "2.0", id: 6, method: "eth_call", params: [{ to: hdo, data: "0x95d89b41" }, "latest"] });
+    }
+    return rpcCall(calls).then(function (res) {
+      function ok(id) {
+        return res[id] && !res[id].error && typeof res[id].result === "string" && res[id].result !== "0x";
+      }
+      var out = { updatedAt: Date.now(), celo: null, usdt: null, hdo: null, hdoSet: !!hdo };
+      if (ok(1)) out.celo = formatUnits(hexToBig(res[1].result), 18);
+      if (ok(2)) {
+        var usdtSymbol = ok(3) ? decodeAbiString(res[3].result) : "";
+        out.usdt = /USD/i.test(usdtSymbol) || !usdtSymbol
+          ? formatUnits(hexToBig(res[2].result), 6)
+          : null;
+      }
+      if (hdo && ok(4)) {
+        var decimals = ok(5) ? Number(hexToBig(res[5].result)) : 18;
+        if (!(decimals >= 0 && decimals <= 36)) decimals = 18;
+        out.hdo = formatUnits(hexToBig(res[4].result), decimals);
+        out.hdoSymbol = ok(6) ? decodeAbiString(res[6].result) : "";
+      }
+      return out;
+    });
+  }
+
   function normalizeState(data) {
     var input = data && typeof data === "object" ? data : {};
     var userInput = input.user && typeof input.user === "object" ? input.user : {};
@@ -881,6 +1273,9 @@
       cursors[slugFor(key)] = { id: id, ts: ts };
     });
 
+    var wallet = cleanWallet(input.wallet);
+    var walletArchive = cleanWalletArchive(input.walletArchive);
+
     var cryptoInput = input.crypto && typeof input.crypto === "object" ? input.crypto : {};
     var cryptoState = {
       publicKey: cleanPublicKey(cryptoInput.publicKey),
@@ -890,18 +1285,21 @@
     };
 
     return {
-      schema: 1,
+      schema: 2,
       user: user,
       settings: {
         room: room,
         relay: relay,
-        notify: settingsInput.notify !== false
+        notify: settingsInput.notify !== false,
+        hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : ""
       },
       contacts: contacts,
       threads: threads,
       cursors: cursors,
       dmCursor: dmCursor,
       crypto: cryptoState,
+      wallet: wallet,
+      walletArchive: walletArchive,
       welcome: input.welcome !== false
     };
   }
@@ -1063,6 +1461,20 @@
     target.lastTs = Date.now();
   }
 
+  function pruneAutoContacts() {
+    var autos = Object.keys(state.contacts).filter(function (key) {
+      var c = state.contacts[key];
+      return c && c.auto && !state.threads["dm::" + key];
+    });
+    if (autos.length <= MAX_AUTO_CONTACTS) return;
+    autos.sort(function (a, b) {
+      return (state.contacts[a].lastSeen || 0) - (state.contacts[b].lastSeen || 0);
+    });
+    autos.slice(0, autos.length - MAX_AUTO_CONTACTS).forEach(function (key) {
+      delete state.contacts[key];
+    });
+  }
+
   function upsertContact(id, name, emoji, seen) {
     var contactId = normalizeId(id);
     if (!state || !contactId || contactId === state.user.id) return null;
@@ -1079,6 +1491,7 @@
         auto: true
       };
       state.contacts[contactId] = contact;
+      pruneAutoContacts();
     }
     if (name && !contact.alias) contact.name = cleanName(name) || contact.name;
     if (emoji) contact.emoji = safeEmoji(emoji) || contact.emoji;
@@ -1823,6 +2236,7 @@
       view.innerHTML = peopleHTML();
     } else {
       view.innerHTML = meHTML();
+      refreshWallet(false);
     }
 
     updateComposer();
@@ -1894,7 +2308,11 @@
           var online = onlineCount();
           sub.innerHTML = '<span class="cm-dot online"></span>#' + escapeHTML(slugFor(state.settings.room)) +
             " · " + (online ? online + " online" : "no one else online yet") +
-            (cryptoAvailable() ? " · 🔒 encrypted" : " · ⚠ unencrypted");
+            (cryptoAvailable()
+              ? (ROOMS.some(function (r) { return r.slug === slugFor(state.settings.room); })
+                ? " · 🔒 encrypted · public room"
+                : " · 🔒 encrypted")
+              : " · ⚠ encryption unavailable");
         }
       }
       return;
@@ -2336,7 +2754,8 @@
       : (ui.status === "offline" ? "Offline — check your internet connection" : "Connecting");
     var lastSync = ui.lastSync ? relativeTime(ui.lastSync) : "not yet";
 
-    return '<div class="cm-card">' +
+    return walletCardHTML() +
+      '<div class="cm-card">' +
         '<h3>Your profile</h3>' +
         '<div class="cm-profile">' +
           '<span class="cm-avatar cm-avatar-lg" style="--cm-avatar-bg:' + colorFor(state.user.id) + '">' +
@@ -2411,7 +2830,8 @@
         '<p class="cm-muted">Community Chat v' + VERSION + " · Status: " + escapeHTML(statusText) +
           " · Last sync: " + escapeHTML(lastSync) + "</p>" +
         '<p class="cm-muted">🔒 End-to-end encrypted. Room messages use AES-256-GCM with a key derived from the room code. Direct messages use ECDH P-256 key exchange plus AES-256-GCM, so only you and your friend can read them. The relay stores ciphertext, not your messages.</p>' +
-        '<p class="cm-muted">Your private key stays on this phone and is only included in backups you export. Keep a backup if you reinstall Acode. Preset rooms use public room codes, so create your own private room code for sensitive chats. Lucky AI chat stays on this phone.</p>' +
+        '<p class="cm-muted">Your private key stays on this phone and is only included in backups you export. Keep a backup if you reinstall Acode. Preset rooms use public room codes, so create your own private room code for sensitive chats. Lucky AI replies are stored only on this phone, but what you type in the AI Room is sent to luckyai-blush.vercel.app to get an answer.</p>' +
+        '<p class="cm-muted">Your Celo wallet key is created and stored on this phone. It is never sent to the relay, to friends or to Lucky AI. Balances are read from the public Celo network using only your address.</p>' +
         (ui.lastError ? '<p class="cm-muted">Last connection error: ' + escapeHTML(ui.lastError) + "</p>" : "") +
       "</div>";
   }
@@ -2629,6 +3049,18 @@
       clearAllChats();
     } else if (action === "reset-id") {
       resetIdentity();
+    } else if (action === "wallet-copy") {
+      walletCopy();
+    } else if (action === "wallet-refresh") {
+      refreshWallet(true);
+    } else if (action === "wallet-reveal") {
+      walletReveal();
+    } else if (action === "wallet-save-hdo") {
+      saveHdoToken();
+    } else if (action === "wallet-import") {
+      walletImportModal();
+    } else if (action === "wallet-create") {
+      walletCreate();
     } else if (action === "close-modal") {
       closeModal();
     }
@@ -3095,6 +3527,18 @@
       "</div></div>" +
       '<p class="cm-muted">Direct messages are delivered through the public relay and are only shown on phones that have the plugin and know your ID.</p>';
 
+    var safety = cmEl("p", "cm-muted", contact && contact.publicKey
+      ? "Safety number: calculating…"
+      : "Safety number: waiting for your friend’s secure key");
+    modal.body.appendChild(safety);
+    if (contact && contact.publicKey) {
+      safetyNumber(contact.publicKey).then(function (number) {
+        safety.textContent = number
+          ? "Safety number: " + number + " — compare it with your friend. It must be identical on both phones; if not, someone may be impersonating them."
+          : "Safety number unavailable on this device";
+      });
+    }
+
     var copyBtn = document.createElement("button");
     copyBtn.type = "button";
     copyBtn.className = "cm-btn";
@@ -3181,7 +3625,7 @@
     if (!state) return;
     confirmDialog(
       "Reset identity",
-      "This creates a new Community ID and deletes your contacts and chats on this phone. Friends will no longer be able to reach you at the old ID. Export a backup first if you are unsure.",
+      "This creates a new Community ID and deletes your contacts and chats on this phone. Friends will no longer be able to reach you at the old ID. Your Celo wallet is NOT deleted. Export a backup first if you are unsure.",
       "Reset everything",
       function () {
         state.user = makeUser();
@@ -3317,6 +3761,318 @@
     modal.actions.appendChild(ok);
   }
 
+  /* ------------------------------------------------------------------ *
+   * Wallet UI
+   * ------------------------------------------------------------------ */
+
+  function cmEl(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function walletRowHTML(label, value, dim) {
+    return '<div class="cm-wrow"><span class="cm-wsym">' + escapeHTML(label) + "</span>" +
+      '<span class="cm-wval' + (dim ? " dim" : "") + '">' + escapeHTML(value) + "</span></div>";
+  }
+
+  function walletBalancesHTML() {
+    var w = ui.wallet;
+    var d = w.data;
+    function val(v) {
+      if (v != null) return v;
+      return w.loading ? "…" : "—";
+    }
+    var hdoSet = !!hdoTokenAddress();
+    var hdoLabel = d && d.hdoSymbol ? d.hdoSymbol : "HDO";
+    var status = w.error
+      ? "Could not load balances (" + w.error + "). Tap Refresh."
+      : (d ? "Updated " + relativeTime(d.updatedAt) : (w.loading ? "Loading balances…" : "Not loaded yet"));
+    return walletRowHTML("CELO", val(d && d.celo), !d || d.celo == null) +
+      walletRowHTML(hdoLabel, hdoSet ? val(d && d.hdo) : "set contract", !hdoSet || !d || d.hdo == null) +
+      walletRowHTML("USDT", val(d && d.usdt), !d || d.usdt == null) +
+      '<p class="cm-muted cm-wstatus">' + escapeHTML(status) + "</p>";
+  }
+
+  function walletCardHTML() {
+    if (!state) return "";
+    if (!walletSupported()) {
+      return '<div class="cm-card"><h3>Celo wallet</h3>' +
+        '<p class="cm-muted">This device’s WebView does not support the features a wallet needs (BigInt and secure random numbers). Update Android System WebView and reopen Acode.</p></div>';
+    }
+    if (!state.wallet) {
+      return '<div class="cm-card"><h3>Celo wallet</h3>' +
+        '<p>No wallet on this phone yet.</p>' +
+        '<div class="cm-button-row"><button type="button" class="cm-btn primary" data-action="wallet-create">Create wallet</button></div></div>';
+    }
+    return '<div class="cm-card cm-wallet">' +
+      "<h3>Celo wallet</h3>" +
+      '<p>Your EVM address on Celo mainnet. It was created on this phone and only you hold the key.</p>' +
+      '<div class="cm-idbox cm-addrbox"><code>' + escapeHTML(state.wallet.address) + "</code>" +
+        '<button type="button" class="cm-chip" data-action="wallet-copy">Copy</button></div>' +
+      '<div class="cm-wbal" data-role="wallet-balances">' + walletBalancesHTML() + "</div>" +
+      '<div class="cm-button-row">' +
+        '<button type="button" class="cm-btn" data-action="wallet-refresh">Refresh</button>' +
+        '<button type="button" class="cm-btn" data-action="wallet-reveal">Back up key</button>' +
+        '<button type="button" class="cm-btn" data-action="wallet-import">Import wallet</button>' +
+      "</div>" +
+      "<details>" +
+        "<summary>Token settings</summary>" +
+        '<label class="cm-label" for="cm-hdo">HDO token contract (Celo)</label>' +
+        '<div class="cm-inline">' +
+          '<input class="cm-input" id="cm-hdo" data-role="hdoinput" type="text" spellcheck="false" placeholder="0x…" value="' +
+            escapeHTML((state.settings && state.settings.hdoToken) || HDO_TOKEN_DEFAULT) + '">' +
+          '<button type="button" class="cm-btn primary" data-action="wallet-save-hdo">Save</button>' +
+        "</div>" +
+        '<p class="cm-muted">Only paste the official HDO contract. The balance is read straight from Celo; nothing is sent. USDT uses the Tether contract on Celo.</p>' +
+      "</details>" +
+      '<p class="cm-muted">Only send CELO, HDO and USDT on the <b>Celo</b> network to this address. Back up your key: if you lose this phone without a backup, the funds are gone.</p>' +
+    "</div>";
+  }
+
+  function paintWalletBalances() {
+    if (!$root) return;
+    var box = $root.querySelector('[data-role="wallet-balances"]');
+    if (box) box.innerHTML = walletBalancesHTML();
+  }
+
+  function refreshWallet(force) {
+    if (!state || !state.wallet || !walletSupported()) return;
+    var w = ui.wallet;
+    if (w.loading) return;
+    if (!force && w.at && Date.now() - w.at < WALLET_REFRESH_MS) return;
+    w.loading = true;
+    w.error = "";
+    paintWalletBalances();
+    var address = state.wallet.address;
+    fetchWalletBalances().then(function (data) {
+      if (!state || !state.wallet || state.wallet.address !== address) return;
+      w.data = data;
+    }).catch(function (error) {
+      w.error = (error && error.message) || "network error";
+    }).then(function () {
+      w.at = Date.now();
+      w.loading = false;
+      paintWalletBalances();
+    });
+  }
+
+  function resetWalletView() {
+    ui.wallet = { data: null, loading: false, error: "", at: 0 };
+  }
+
+  function walletCopy() {
+    if (!state || !state.wallet) return;
+    copyText(state.wallet.address).then(function (ok) {
+      toastMsg(ok ? "Wallet address copied" : "Could not copy the address");
+    });
+  }
+
+  function walletCreate() {
+    if (!state) return;
+    if (!ensureWallet()) {
+      toastMsg("This device cannot create a wallet");
+      return;
+    }
+    resetWalletView();
+    render();
+    refreshWallet(true);
+    toastMsg("Wallet created");
+  }
+
+  function saveHdoToken() {
+    if (!state || !$root) return;
+    var input = $root.querySelector('[data-role="hdoinput"]');
+    var value = input ? String(input.value || "").trim() : "";
+    if (value && !isAddress(value)) {
+      toastMsg("Enter a full 0x… contract address (42 characters)");
+      return;
+    }
+    state.settings.hdoToken = value;
+    saveState();
+    resetWalletView();
+    render();
+    refreshWallet(true);
+    toastMsg(value ? "HDO contract saved" : "Using the default HDO contract");
+  }
+
+  function walletImportModal() {
+    if (!state || !walletSupported()) return;
+    var modal = openModal("Import wallet");
+    modal.body.appendChild(cmEl("p", "",
+      "Paste a 64-character private key (with or without 0x). Your wallet address will change to the one for that key. Your current wallet is not deleted: its key stays under Back up key."));
+    var input = cmEl("input", "cm-input");
+    input.type = "password";
+    input.placeholder = "Private key (0x…)";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    modal.body.appendChild(input);
+
+    var cancel = cmEl("button", "cm-btn", "Cancel");
+    cancel.type = "button";
+    cancel.onclick = closeModal;
+
+    var go = cmEl("button", "cm-btn primary", "Import");
+    go.type = "button";
+    go.onclick = function () {
+      var raw = String(input.value || "").trim();
+      if (/\s/.test(raw)) {
+        toastMsg("Seed phrases are not supported. Paste the private key.");
+        return;
+      }
+      var wallet = cleanWallet({ privateKey: raw });
+      if (!wallet) {
+        toastMsg("That is not a valid private key");
+        return;
+      }
+      if (state.wallet && state.wallet.address === wallet.address) {
+        toastMsg("This wallet is already active");
+        return;
+      }
+      input.value = "";
+      modal.close();
+      confirmDialog(
+        "Use this wallet?",
+        "Your Celo wallet will become " + wallet.address + ". Your current wallet stays saved under Back up key.",
+        "Import wallet",
+        function () {
+          applyWalletImport(wallet);
+        },
+        false
+      );
+    };
+    modal.actions.appendChild(cancel);
+    modal.actions.appendChild(go);
+  }
+
+  function applyWalletImport(wallet) {
+    if (!state || !wallet) return;
+    if (state.wallet) archiveWallet(state.wallet);
+    state.walletArchive = (state.walletArchive || []).filter(function (item) {
+      return item.privateKey !== wallet.privateKey;
+    });
+    state.wallet = wallet;
+    saveState();
+    resetWalletView();
+    render();
+    refreshWallet(true);
+    toastMsg("Wallet imported");
+  }
+
+  function walletReveal() {
+    if (!state || !state.wallet) return;
+    confirmDialog(
+      "Show private key",
+      "Anyone who sees this key can take everything in this wallet. Make sure nobody is watching your screen, and never share it in a chat.",
+      "Show key",
+      showWalletKey,
+      true
+    );
+  }
+
+  function showWalletKey() {
+    if (!state || !state.wallet) return;
+    var modal = openModal("Wallet private key");
+    modal.body.appendChild(cmEl("p", "", "Import this key into any EVM wallet (MetaMask, Valora, Rabby) to use your funds. Keep it offline and private."));
+    var wallets = [state.wallet].concat(Array.isArray(state.walletArchive) ? state.walletArchive : []);
+    wallets.forEach(function (wallet, index) {
+      modal.body.appendChild(cmEl("p", "cm-muted", index === 0 ? "Current wallet" : "Older wallet"));
+      var box = cmEl("div", "cm-idbox cm-keybox");
+      box.appendChild(cmEl("code", "", wallet.address));
+      modal.body.appendChild(box);
+      var keyBox = cmEl("div", "cm-idbox cm-keybox");
+      keyBox.appendChild(cmEl("code", "", wallet.privateKey));
+      var copy = cmEl("button", "cm-chip", "Copy key");
+      copy.type = "button";
+      copy.onclick = function () {
+        copyText(wallet.privateKey).then(function (ok) {
+          toastMsg(ok ? "Private key copied — clear your clipboard after use" : "Could not copy the key");
+        });
+      };
+      keyBox.appendChild(copy);
+      modal.body.appendChild(keyBox);
+    });
+    var close = cmEl("button", "cm-btn primary", "Close");
+    close.type = "button";
+    close.onclick = closeModal;
+    modal.actions.appendChild(close);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Safety number (verify a friend's key)
+   * ------------------------------------------------------------------ */
+
+  function safetyNumber(peerKey) {
+    var mine = state && state.crypto && state.crypto.publicKey;
+    if (!mine || !peerKey || !cryptoAvailable()) return Promise.resolve("");
+    var pair = [mine, peerKey].sort();
+    return window.crypto.subtle.digest("SHA-256", utf8Bytes(pair.join("|"))).then(function (buf) {
+      var bytes = new Uint8Array(buf);
+      var groups = [];
+      for (var i = 0; i < 6; i += 1) {
+        var n = ((bytes[i * 4] << 24) | (bytes[i * 4 + 1] << 16) | (bytes[i * 4 + 2] << 8) | bytes[i * 4 + 3]) >>> 0;
+        var s = String(n % 100000);
+        while (s.length < 5) s = "0" + s;
+        groups.push(s);
+      }
+      return groups.join(" ");
+    }).catch(function () {
+      return "";
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Passphrase-encrypted backups
+   * ------------------------------------------------------------------ */
+
+  var BACKUP_ENC = "cm-backup-pbkdf2-aesgcm-v1";
+  var BACKUP_ITER = 210000;
+
+  function backupKey(pass, salt, iterations) {
+    return window.crypto.subtle.importKey("raw", utf8Bytes(pass), "PBKDF2", false, ["deriveKey"]).then(function (material) {
+      return window.crypto.subtle.deriveKey(
+        { name: "PBKDF2", salt: salt, iterations: iterations, hash: "SHA-256" },
+        material,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt", "decrypt"]
+      );
+    });
+  }
+
+  function encryptBackup(json, pass) {
+    var salt = window.crypto.getRandomValues(new Uint8Array(16));
+    var iv = window.crypto.getRandomValues(new Uint8Array(12));
+    return backupKey(pass, salt, BACKUP_ITER).then(function (key) {
+      return window.crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, utf8Bytes(json));
+    }).then(function (cipher) {
+      return JSON.stringify({
+        app: APP_TAG,
+        enc: BACKUP_ENC,
+        iter: BACKUP_ITER,
+        salt: bytesToBase64(salt),
+        iv: bytesToBase64(iv),
+        data: bytesToBase64(new Uint8Array(cipher))
+      }, null, 2);
+    });
+  }
+
+  function decryptBackup(parsed, pass) {
+    var iterations = Number(parsed.iter);
+    if (!(iterations >= 100000 && iterations <= 2000000) || typeof parsed.salt !== "string" ||
+        typeof parsed.iv !== "string" || typeof parsed.data !== "string") {
+      return Promise.reject(new Error("This encrypted backup is damaged"));
+    }
+    return backupKey(pass, base64ToBytes(parsed.salt), iterations).then(function (key) {
+      return window.crypto.subtle.decrypt({ name: "AES-GCM", iv: base64ToBytes(parsed.iv) }, key, base64ToBytes(parsed.data));
+    }).then(function (plain) {
+      return JSON.parse(utf8Text(new Uint8Array(plain)));
+    }).catch(function () {
+      throw new Error("Wrong passphrase or damaged backup");
+    });
+  }
+
   function exportModal() {
     if (!state) return;
     var payload = {
@@ -3327,58 +4083,151 @@
     };
     var json = JSON.stringify(payload, null, 2);
     var modal = openModal("Backup");
-    var info = document.createElement("p");
-    info.textContent = "This backup contains your Community ID, contacts, message history and your private encryption key. Anyone with the backup can read your direct messages, so keep it somewhere safe.";
-    modal.body.appendChild(info);
+    modal.body.appendChild(cmEl("p", "",
+      "A backup holds your Community ID, contacts, messages, your chat encryption key and your Celo wallet private key. Encrypt it with a passphrase and keep the file somewhere safe."));
 
-    var area = document.createElement("textarea");
-    area.className = "cm-modal-textarea";
+    var pass = cmEl("input", "cm-input");
+    pass.type = "password";
+    pass.placeholder = "Passphrase (8+ characters)";
+    pass.autocomplete = "new-password";
+    modal.body.appendChild(pass);
+
+    var area = cmEl("textarea", "cm-modal-textarea");
     area.readOnly = true;
-    area.value = json;
+    area.placeholder = "Your backup appears here";
     modal.body.appendChild(area);
 
-    var copyBtn = document.createElement("button");
+    var encBtn = cmEl("button", "cm-btn primary", "Encrypt backup");
+    encBtn.type = "button";
+    encBtn.onclick = function () {
+      var phrase = String(pass.value || "");
+      if (phrase.length < 8) {
+        toastMsg("Use a passphrase of at least 8 characters");
+        return;
+      }
+      if (!cryptoAvailable()) {
+        toastMsg("Encryption is not available on this device");
+        return;
+      }
+      encBtn.disabled = true;
+      encBtn.textContent = "Encrypting…";
+      encryptBackup(json, phrase).then(function (text) {
+        area.value = text;
+        toastMsg("Encrypted backup ready — copy it");
+      }).catch(function () {
+        toastMsg("Could not encrypt the backup");
+      }).then(function () {
+        encBtn.disabled = false;
+        encBtn.textContent = "Encrypt backup";
+      });
+    };
+
+    var plainBtn = cmEl("button", "cm-btn", "Plain backup (unsafe)");
+    plainBtn.type = "button";
+    plainBtn.onclick = function () {
+      area.value = json;
+      toastMsg("Plain backup shows your private keys. Do not share it.", 4000);
+    };
+
+    var copyBtn = cmEl("button", "cm-btn", "Copy");
     copyBtn.type = "button";
-    copyBtn.className = "cm-btn";
-    copyBtn.textContent = "Copy backup";
     copyBtn.onclick = function () {
-      copyText(json).then(function (ok) {
+      if (!area.value) {
+        toastMsg("Create the backup first");
+        return;
+      }
+      copyText(area.value).then(function (ok) {
         toastMsg(ok ? "Backup copied" : "Could not copy — select the text manually");
       });
     };
 
-    var closeBtn = document.createElement("button");
+    var closeBtn = cmEl("button", "cm-btn", "Close");
     closeBtn.type = "button";
-    closeBtn.className = "cm-btn primary";
-    closeBtn.textContent = "Close";
     closeBtn.onclick = closeModal;
 
+    var row = cmEl("div", "cm-button-row");
+    row.appendChild(encBtn);
+    row.appendChild(plainBtn);
+    modal.body.appendChild(row);
     modal.actions.appendChild(copyBtn);
     modal.actions.appendChild(closeBtn);
+  }
+
+  function applyImportedBackup(incoming) {
+    var previousWallet = state ? state.wallet : null;
+    state = normalizeState(incoming);
+    if (previousWallet) {
+      if (!state.wallet) {
+        state.wallet = previousWallet;
+      } else if (state.wallet.address !== previousWallet.address) {
+        archiveWallet(previousWallet);
+      }
+    }
+    state.dmCursor = null;
+    resetCryptoCaches();
+    ensureCommunityThread();
+    if (isAiRoom()) ensureAiWelcome(getThread("community", true));
+    ensureWallet();
+    resetWalletView();
+    saveState();
+    ui.tab = "chats";
+    ui.mode = "tabs";
+    ui.peer = null;
+    removeThreadBackAction();
+    render();
+    updateSidebar();
+    pollNow();
+    var restoredCrypto = !!(state.crypto && state.crypto.publicKey && state.crypto.privateJwk);
+    if (restoredCrypto) state.crypto.publishedAt = 0;
+    (restoredCrypto ? Promise.resolve(true) : ensureIdentityKeys()).then(function (ok) {
+      if (!ok) return;
+      publishPublicKey(true);
+      publishPresence();
+    });
+    toastMsg("Backup imported");
   }
 
   function importModal() {
     if (!state) return;
     var modal = openModal("Import backup");
-    var info = document.createElement("p");
-    info.textContent = "Paste a Community backup below. Importing replaces your ID, contacts and messages on this phone.";
-    modal.body.appendChild(info);
+    modal.body.appendChild(cmEl("p", "",
+      "Paste a Community backup below. Importing replaces your ID, contacts and messages on this phone. If the backup has a different Celo wallet, your current wallet is kept in the key backup list."));
 
-    var area = document.createElement("textarea");
-    area.className = "cm-modal-textarea";
+    var pass = cmEl("input", "cm-input");
+    pass.type = "password";
+    pass.placeholder = "Passphrase (only for encrypted backups)";
+    pass.autocomplete = "off";
+    modal.body.appendChild(pass);
+
+    var area = cmEl("textarea", "cm-modal-textarea");
     area.placeholder = "Paste the backup JSON here…";
     modal.body.appendChild(area);
 
-    var cancel = document.createElement("button");
+    var cancel = cmEl("button", "cm-btn", "Cancel");
     cancel.type = "button";
-    cancel.className = "cm-btn";
-    cancel.textContent = "Cancel";
     cancel.onclick = closeModal;
 
-    var load = document.createElement("button");
+    var load = cmEl("button", "cm-btn primary", "Import");
     load.type = "button";
-    load.className = "cm-btn primary";
-    load.textContent = "Import";
+
+    function proceed(parsed) {
+      var incoming = parsed && parsed.state ? parsed.state : parsed;
+      if (!incoming || typeof incoming !== "object" || !incoming.user || !normalizeId(incoming.user.id)) {
+        toastMsg("This does not look like a Community backup");
+        return;
+      }
+      modal.close();
+      confirmDialog(
+        "Replace my data?",
+        "This replaces your current ID, contacts and messages with the backup. This cannot be undone.",
+        "Import backup",
+        function () {
+          applyImportedBackup(incoming);
+        },
+        false
+      );
+    }
+
     load.onclick = function () {
       var raw = String(area.value || "").trim();
       if (!raw) {
@@ -3392,50 +4241,30 @@
         toastMsg("That is not valid JSON");
         return;
       }
-      var incoming = parsed && parsed.state ? parsed.state : parsed;
-      if (!incoming || typeof incoming !== "object" || !incoming.user || !normalizeId(incoming.user.id)) {
-        toastMsg("This does not look like a Community backup");
+      if (parsed && parsed.enc === BACKUP_ENC) {
+        var phrase = String(pass.value || "");
+        if (!phrase) {
+          toastMsg("Enter the backup passphrase");
+          return;
+        }
+        load.disabled = true;
+        load.textContent = "Decrypting…";
+        decryptBackup(parsed, phrase).then(function (inner) {
+          proceed(inner);
+        }).catch(function (error) {
+          toastMsg(error && error.message ? error.message : "Could not open the backup");
+        }).then(function () {
+          load.disabled = false;
+          load.textContent = "Import";
+        });
         return;
       }
-      modal.close();
-      confirmDialog(
-        "Replace my data?",
-        "This will replace your current ID, contacts and messages with the backup. This cannot be undone.",
-        "Import backup",
-        function () {
-          state = normalizeState(incoming);
-          state.dmCursor = null;
-          resetCryptoCaches();
-          ensureCommunityThread();
-          if (isAiRoom()) ensureAiWelcome(getThread("community", true));
-          saveState();
-          ui.tab = "chats";
-          ui.mode = "tabs";
-          ui.peer = null;
-          removeThreadBackAction();
-          render();
-          updateSidebar();
-          pollNow();
-          var restoredCrypto = !!(state.crypto && state.crypto.publicKey && state.crypto.privateJwk);
-          if (restoredCrypto) state.crypto.publishedAt = 0;
-          (restoredCrypto ? Promise.resolve(true) : ensureIdentityKeys()).then(function (ok) {
-            if (!ok) return;
-            publishPublicKey(true);
-            publishPresence();
-          });
-          toastMsg("Backup imported");
-        },
-        false
-      );
+      proceed(parsed);
     };
 
     modal.actions.appendChild(cancel);
     modal.actions.appendChild(load);
   }
-
-  /* ------------------------------------------------------------------ *
-   * Acode plugin lifecycle
-   * ------------------------------------------------------------------ */
 
   function injectStyle() {
     var existing = document.getElementById("community-chat-style");
@@ -3524,6 +4353,7 @@
     if (!loadedFromStorage) state.welcome = true;
     ensureCommunityThread();
     if (isAiRoom()) ensureAiWelcome(getThread("community", true));
+    ensureWallet();
 
     /* Save immediately so the generated ID exists on the phone even if the
        user never opens the plugin. */

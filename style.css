@@ -1276,3 +1276,64 @@
     font-size: 19px;
   }
 }
+
+/* ---- Celo wallet (v1.3.0) ---- */
+.cm-wallet .cm-addrbox code {
+  word-break: break-all;
+  white-space: normal;
+  font-size: 12px;
+}
+
+.cm-wbal {
+  margin: 10px 0 4px;
+  border: 1px solid var(--cm-border, rgba(127, 127, 127, 0.25));
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.cm-wrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--cm-border, rgba(127, 127, 127, 0.18));
+}
+
+.cm-wrow:last-of-type {
+  border-bottom: 0;
+}
+
+.cm-wsym {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.cm-wval {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+  word-break: break-all;
+}
+
+.cm-wval.dim {
+  opacity: 0.55;
+  font-weight: 500;
+}
+
+.cm-wstatus {
+  margin: 0;
+  padding: 8px 12px 10px;
+  font-size: 12px;
+}
+
+.cm-keybox code {
+  word-break: break-all;
+  white-space: normal;
+  font-size: 12px;
+}
+
+.cm-modal-body input.cm-input {
+  width: 100%;
+  margin-bottom: 8px;
+}
