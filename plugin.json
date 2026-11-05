@@ -1,0 +1,34 @@
+{
+  "id": "mrjeffagency.community",
+  "name": "Community Chat",
+  "version": "1.2.0",
+  "main": "main.js",
+  "readme": "readme.md",
+  "icon": "icon.png",
+  "files": [
+    "style.css"
+  ],
+  "minVersionCode": 290,
+  "price": 0,
+  "license": "MIT",
+  "keywords": [
+    "chat",
+    "community",
+    "messaging",
+    "friends",
+    "social",
+    "rooms",
+    "ai",
+    "images",
+    "lucky ai",
+    "encryption",
+    "privacy",
+    "secure chat"
+  ],
+  "author": {
+    "name": "MrJeffAgency",
+    "email": "princejeffery7214810@gmail.com",
+    "github": "MrJeffAgency"
+  },
+  "changelogs": "changelogs.md"
+}
