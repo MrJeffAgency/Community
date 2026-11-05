@@ -19,7 +19,7 @@
    * ------------------------------------------------------------------ */
 
   var PLUGIN_ID = "mrjeffagency.community";
-  var VERSION = "1.2.0";
+  var VERSION = "1.2.1";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -1761,11 +1761,17 @@
     tail.className = "icon more_vert";
     tail.title = "Community settings";
     tail.setAttribute("role", "button");
-    tail.addEventListener("click", function () {
-      ui.tab = "me";
-      ui.mode = "tabs";
-      ui.peer = null;
-      render();
+    tail.setAttribute("aria-label", "Community settings");
+    /* Acode header tiles disable pointer events on children unless they
+       declare a data-action attribute. Without this the titlebar button
+       looks fine but cannot be tapped. */
+    tail.setAttribute("data-action", "open-settings");
+    tail.addEventListener("click", function (event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      switchTab("me");
     });
     if (pageRef.header && typeof pageRef.header.appendChild === "function") {
       pageRef.header.appendChild(tail);
