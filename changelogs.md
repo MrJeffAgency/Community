@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0
+- The wallet now shows balances on **Celo**, **BNB Smart Chain**, **Polygon** and **Ethereum** from one address.
+- Added **G$ (GoodDollar)** balances on Celo and Ethereum, plus USDT/USDC on every supported network and HDO on Celo.
+- You can now **send tokens** to any 0x wallet address directly from the wallet. Transfers are signed on the phone and broadcast to the selected network; the private key never leaves the device.
+- Added a coin button in rooms and direct chats to send tokens and post an encrypted receipt card with the amount, recipient and transaction link.
+- Token sending is disabled in the AI Room.
+- You can save a friend's wallet address in Chat options so it is filled in automatically when sending tokens in a direct chat.
+- Added live fee checks, token balance checks and clear errors before a transfer is signed.
+- Updated the README and privacy notes for multi-chain balances and on-chain transfers.
+
 ## 1.3.0
 - Added a built-in Celo (EVM) wallet for every user. New users get one on first launch and existing users get one automatically when they update.
 - The Me tab shows the wallet address with live CELO, HDO and USDT balances, plus copy, refresh, private-key backup and HDO token settings.

@@ -1337,3 +1337,109 @@
   width: 100%;
   margin-bottom: 8px;
 }
+
+/* ---- Multi-chain wallet and token messages (v1.4.0) ---- */
+.cm-wchain {
+  border-bottom: 1px solid var(--cm-border, rgba(127, 127, 127, 0.18));
+}
+
+.cm-wchain:last-child {
+  border-bottom: 0;
+}
+
+.cm-wchain-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  background: rgba(127, 127, 127, 0.09);
+}
+
+.cm-wnet {
+  opacity: 0.6;
+  font-weight: 700;
+}
+
+.cm-werror {
+  padding: 7px 12px 9px;
+  color: #d63031;
+  font-size: 12px;
+}
+
+.cm-coinico {
+  font-size: 17px;
+  line-height: 1;
+}
+
+.cm-token {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 168px;
+  padding: 2px 0;
+}
+
+.cm-token-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+}
+
+.cm-token-ico {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.cm-token-sub {
+  font-size: 11px;
+  opacity: 0.72;
+  word-break: break-all;
+}
+
+.cm-token-link {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.cm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+
+.cm-field .cm-label {
+  margin: 0;
+}
+
+select.cm-select {
+  width: 100%;
+  margin: 0 !important;
+  padding: 9px 10px !important;
+  border: 1px solid var(--cm-border, rgba(127, 127, 127, 0.25)) !important;
+  border-radius: 10px;
+  background: var(--cm-card, transparent) !important;
+  color: inherit !important;
+  font: inherit;
+  font-size: 14px;
+}
+
+.cm-tokeninfo {
+  white-space: pre-line;
+  font-size: 12px;
+  margin: 6px 0;
+}

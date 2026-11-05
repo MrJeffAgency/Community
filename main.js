@@ -19,7 +19,7 @@
    * ------------------------------------------------------------------ */
 
   var PLUGIN_ID = "mrjeffagency.community";
-  var VERSION = "1.3.0";
+  var VERSION = "1.4.0";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -109,6 +109,7 @@
     modal: null,
     aiBusy: false,
     aiPending: 0,
+    sendingToken: false,
     wallet: { data: null, loading: false, error: "", at: 0 }
   };
 
@@ -421,7 +422,7 @@
     });
   }
 
-  function buildWireEnvelope(peer, text, image, slug) {
+  function buildWireEnvelope(peer, text, image, slug, token) {
     var room = String(slug || roomSlug());
     var envelope = {
       app: APP_TAG,
@@ -459,7 +460,9 @@
       return keyPromise.then(function (key) {
         var iv = window.crypto.getRandomValues(new Uint8Array(12));
         var aad = utf8Bytes(peer === "community" ? ENC_AAD_ROOM : ENC_AAD_DM);
-        var plain = utf8Bytes(JSON.stringify({ text: text || "", image: image || "" }));
+        var payload = { text: text || "", image: image || "" };
+        if (token) payload.token = token;
+        var plain = utf8Bytes(JSON.stringify(payload));
         return window.crypto.subtle.encrypt(
           { name: "AES-GCM", iv: iv, additionalData: aad },
           key,
@@ -503,7 +506,8 @@
       var payload = JSON.parse(utf8Text(new Uint8Array(plain)));
       return {
         text: String(payload && payload.text || ""),
-        image: sanitizeImage(payload && payload.image || "")
+        image: sanitizeImage(payload && payload.image || ""),
+        token: sanitizeToken(payload && payload.token)
       };
     });
   }
@@ -654,6 +658,27 @@
     return value;
   }
 
+  function sanitizeToken(value) {
+    if (!value || typeof value !== "object") return null;
+    var chain = walletChainByKey(String(value.chain || ""));
+    if (!chain) return null;
+    var symbol = String(value.symbol == null ? "" : value.symbol).slice(0, 12);
+    if (!/^[A-Za-z0-9$._-]{1,12}$/.test(symbol)) symbol = chain.native.symbol;
+    var amount = String(value.amount == null ? "" : value.amount).replace(/,/g, "").slice(0, 32);
+    if (!/^\d+(\.\d+)?$/.test(amount)) return null;
+    var to = cleanWalletAddress(value.to);
+    var tx = /^0x[0-9a-f]{64}$/i.test(String(value.tx || "")) ? String(value.tx).toLowerCase() : "";
+    if (!to || !tx) return null;
+    return { chain: chain.key, symbol: symbol, amount: amount, to: to, tx: tx };
+  }
+
+  function tokenText(token) {
+    if (!token) return "";
+    var chainKey = token.chain || token.chainKey || "";
+    var chain = walletChainByKey(chainKey) || { name: chainKey };
+    return "💸 Sent " + token.amount + " " + token.symbol + " on " + chain.name;
+  }
+
   function cleanRelay(value) {
     var str = String(value == null ? "" : value).trim();
     if (!str) return "";
@@ -784,7 +809,8 @@
       }
       var image = sanitizeImage(message.image);
       var text = typeof message.text === "string" ? message.text : "";
-      if (!text && !image) continue;
+      var token = sanitizeToken(message.token);
+      if (!text && !image && !token) continue;
       var from = normalizeId(message.from);
       if (!from) continue;
       var status = message.status;
@@ -796,8 +822,9 @@
         id: message.id.slice(0, 80),
         from: from,
         name: cleanName(message.name),
-        text: safeText(text, from === AI_ID ? MAX_AI_TEXT : MAX_TEXT),
+        text: safeText(text || tokenText(token), from === AI_ID ? MAX_AI_TEXT : MAX_TEXT),
         image: image,
+        token: token,
         ts: Number(message.ts) || Date.now(),
         mine: !!message.mine,
         status: status
@@ -815,14 +842,90 @@
    * the whole plugin.
    * ------------------------------------------------------------------ */
 
-  var CELO_CHAIN_ID = 42220;
-  var CELO_RPCS = ["https://forno.celo.org", "https://rpc.ankr.com/celo"];
+  var WALLET_REFRESH_MS = 30000;
+  var MAX_WALLET_ARCHIVE = 20;
+
+  /* Token contracts. G$ (GoodDollar) is on Celo (18 decimals) and Ethereum
+     (2 decimals). USDT and USDC use the canonical contracts on each chain. */
+  var GDOLLAR_CELO = "0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A";
+  var GDOLLAR_ETH = "0x67C5870b4A41D4Ebef24d2456547A03F1f3e094B";
+  var USDT_TOKEN = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e";
+  var USDC_CELO = "0xcebA9300f2b948710d2653dD7B07f33A8B32118C";
   /* HDO token contract on Celo. Every user gets this by default; a user can
      override it in Wallet > Token settings. */
   var HDO_TOKEN_DEFAULT = "0x0b7e844Dd950558295eB5Ee7d5f57d18c1BEeb02";
-  var USDT_TOKEN = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e";
-  var WALLET_REFRESH_MS = 30000;
-  var MAX_WALLET_ARCHIVE = 20;
+
+  var WALLET_CHAINS = [
+    {
+      key: "celo",
+      name: "Celo",
+      chainId: 42220,
+      native: { symbol: "CELO", decimals: 18 },
+      rpcs: ["https://forno.celo.org", "https://celo-rpc.publicnode.com"],
+      explorer: "https://celoscan.io/tx/",
+      tokens: [
+        { symbol: "G$", address: GDOLLAR_CELO, decimals: 18 },
+        { symbol: "USDT", address: USDT_TOKEN, decimals: 6 },
+        { symbol: "USDC", address: USDC_CELO, decimals: 6 },
+        { symbol: "HDO", address: HDO_TOKEN_DEFAULT, decimals: 18, custom: "hdo" }
+      ]
+    },
+    {
+      key: "bsc",
+      name: "BNB Smart Chain",
+      chainId: 56,
+      native: { symbol: "BNB", decimals: 18 },
+      rpcs: ["https://bsc-dataseed.bnbchain.org", "https://bsc-rpc.publicnode.com"],
+      explorer: "https://bscscan.com/tx/",
+      tokens: [
+        { symbol: "USDT", address: "0x55d398326f99059fF775485246999027B3197955", decimals: 18 }
+      ]
+    },
+    {
+      key: "polygon",
+      name: "Polygon",
+      chainId: 137,
+      native: { symbol: "POL", decimals: 18 },
+      rpcs: ["https://polygon-bor-rpc.publicnode.com", "https://polygon.drpc.org"],
+      explorer: "https://polygonscan.com/tx/",
+      tokens: [
+        { symbol: "USDT", address: "0xc2132D05D31c914a87C6611C10748aeb04B58e8f", decimals: 6 },
+        { symbol: "USDC", address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", decimals: 6 }
+      ]
+    },
+    {
+      key: "ethereum",
+      name: "Ethereum",
+      chainId: 1,
+      native: { symbol: "ETH", decimals: 18 },
+      rpcs: ["https://ethereum-rpc.publicnode.com", "https://eth.drpc.org"],
+      explorer: "https://etherscan.io/tx/",
+      tokens: [
+        { symbol: "G$", address: GDOLLAR_ETH, decimals: 2 },
+        { symbol: "USDT", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
+        { symbol: "USDC", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 }
+      ]
+    }
+  ];
+
+  function walletChainByKey(key) {
+    for (var i = 0; i < WALLET_CHAINS.length; i += 1) {
+      if (WALLET_CHAINS[i].key === key) return WALLET_CHAINS[i];
+    }
+    return null;
+  }
+
+  function chainTokens(chain) {
+    if (!chain) return [];
+    return chain.tokens.map(function (token) {
+      if (token.custom === "hdo") {
+        return { symbol: token.symbol, address: hdoTokenAddress(), decimals: token.decimals };
+      }
+      return token;
+    }).filter(function (token) {
+      return !!token.address;
+    });
+  }
 
   var wBI = typeof BigInt === "function" ? BigInt : null;
   var wK = null;
@@ -1013,6 +1116,15 @@
     return typeof value === "string" && /^0x[0-9a-fA-F]{40}$/.test(value);
   }
 
+  function cleanWalletAddress(value) {
+    if (!walletSupported() || !isAddress(value)) return "";
+    try {
+      return checksumAddress(value);
+    } catch (e) {
+      return "";
+    }
+  }
+
   function addressFromPrivateKey(hexKey) {
     var k = wConst();
     if (!isHexKey(hexKey)) return "";
@@ -1101,12 +1213,13 @@
     return isAddress(HDO_TOKEN_DEFAULT) ? HDO_TOKEN_DEFAULT : "";
   }
 
-  function rpcCall(calls) {
+  function rpcCall(calls, rpcs) {
     var body = JSON.stringify(calls);
+    var urls = Array.isArray(rpcs) && rpcs.length ? rpcs : WALLET_CHAINS[0].rpcs;
     var index = 0;
     function attempt() {
-      if (index >= CELO_RPCS.length) return Promise.reject(new Error("Celo network is not reachable"));
-      var url = CELO_RPCS[index];
+      if (index >= urls.length) return Promise.reject(new Error("Network is not reachable"));
+      var url = urls[index];
       index += 1;
       return fetchWithTimeout(url, {
         method: "POST",
@@ -1162,40 +1275,302 @@
     }
   }
 
-  function fetchWalletBalances() {
-    if (!state || !state.wallet) return Promise.resolve(null);
+  function fetchChainBalances(chain) {
+    if (!state || !state.wallet || !chain) return Promise.reject(new Error("No wallet"));
     var holder = state.wallet.address.slice(2).toLowerCase();
     var data = "0x70a08231" + "000000000000000000000000" + holder;
-    var hdo = hdoTokenAddress();
+    var tokens = chainTokens(chain);
     var calls = [
-      { jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: [state.wallet.address, "latest"] },
-      { jsonrpc: "2.0", id: 2, method: "eth_call", params: [{ to: USDT_TOKEN, data: data }, "latest"] },
-      { jsonrpc: "2.0", id: 3, method: "eth_call", params: [{ to: USDT_TOKEN, data: "0x95d89b41" }, "latest"] }
+      { jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: [state.wallet.address, "latest"] }
     ];
-    if (hdo) {
-      calls.push({ jsonrpc: "2.0", id: 4, method: "eth_call", params: [{ to: hdo, data: data }, "latest"] });
-      calls.push({ jsonrpc: "2.0", id: 5, method: "eth_call", params: [{ to: hdo, data: "0x313ce567" }, "latest"] });
-      calls.push({ jsonrpc: "2.0", id: 6, method: "eth_call", params: [{ to: hdo, data: "0x95d89b41" }, "latest"] });
-    }
-    return rpcCall(calls).then(function (res) {
-      function ok(id) {
-        return res[id] && !res[id].error && typeof res[id].result === "string" && res[id].result !== "0x";
-      }
-      var out = { updatedAt: Date.now(), celo: null, usdt: null, hdo: null, hdoSet: !!hdo };
-      if (ok(1)) out.celo = formatUnits(hexToBig(res[1].result), 18);
-      if (ok(2)) {
-        var usdtSymbol = ok(3) ? decodeAbiString(res[3].result) : "";
-        out.usdt = /USD/i.test(usdtSymbol) || !usdtSymbol
-          ? formatUnits(hexToBig(res[2].result), 6)
+    tokens.forEach(function (token, index) {
+      calls.push({
+        jsonrpc: "2.0",
+        id: 100 + index * 2,
+        method: "eth_call",
+        params: [{ to: token.address, data: data }, "latest"]
+      });
+      calls.push({
+        jsonrpc: "2.0",
+        id: 101 + index * 2,
+        method: "eth_call",
+        params: [{ to: token.address, data: "0x313ce567" }, "latest"]
+      });
+    });
+    return rpcCall(calls, chain.rpcs).then(function (res) {
+      function result(id) {
+        return res[id] && !res[id].error && typeof res[id].result === "string" && res[id].result !== "0x"
+          ? res[id].result
           : null;
       }
-      if (hdo && ok(4)) {
-        var decimals = ok(5) ? Number(hexToBig(res[5].result)) : 18;
-        if (!(decimals >= 0 && decimals <= 36)) decimals = 18;
-        out.hdo = formatUnits(hexToBig(res[4].result), decimals);
-        out.hdoSymbol = ok(6) ? decodeAbiString(res[6].result) : "";
-      }
+      var nativeRaw = result(1) ? hexToBig(result(1)) : wConst().Z;
+      var out = {
+        updatedAt: Date.now(),
+        native: {
+          symbol: chain.native.symbol,
+          decimals: chain.native.decimals,
+          raw: nativeRaw.toString(),
+          amount: formatUnits(nativeRaw, chain.native.decimals)
+        },
+        tokens: []
+      };
+      tokens.forEach(function (token, index) {
+        var raw = result(100 + index * 2);
+        if (raw == null) return;
+        var dec = result(101 + index * 2);
+        var decimals = dec == null ? token.decimals : Number(hexToBig(dec));
+        if (!(decimals >= 0 && decimals <= 36)) decimals = token.decimals;
+        var value = hexToBig(raw);
+        out.tokens.push({
+          symbol: token.symbol,
+          address: token.address,
+          decimals: decimals,
+          raw: value.toString(),
+          amount: formatUnits(value, decimals)
+        });
+      });
       return out;
+    });
+  }
+
+  function fetchWalletBalances() {
+    if (!state || !state.wallet) return Promise.resolve(null);
+    return Promise.all(WALLET_CHAINS.map(function (chain) {
+      return fetchChainBalances(chain).then(function (data) {
+        return { key: chain.key, ok: true, data: data };
+      }).catch(function (error) {
+        return { key: chain.key, ok: false, error: (error && error.message) || "network error" };
+      });
+    })).then(function (chains) {
+      return { updatedAt: Date.now(), chains: chains };
+    });
+  }
+
+  /* --- Transaction signing (legacy EIP-155 transactions) --- */
+
+  function parseUnits(value, decimals) {
+    var text = String(value == null ? "" : value).trim().replace(/,/g, "");
+    if (!text || !/^\d*(\.\d*)?$/.test(text) || text === ".") {
+      throw new Error("Enter a valid amount");
+    }
+    var parts = text.split(".");
+    var whole = parts[0] || "0";
+    var frac = parts[1] || "";
+    if (frac.length > decimals) {
+      throw new Error("Use at most " + decimals + " decimal places");
+    }
+    while (frac.length < decimals) frac += "0";
+    var raw = wBI(whole + frac);
+    if (raw <= wConst().Z) throw new Error("Amount must be greater than zero");
+    return raw;
+  }
+
+  function concatBytes(list) {
+    var total = 0;
+    list.forEach(function (item) {
+      total += item.length;
+    });
+    var out = new Uint8Array(total);
+    var offset = 0;
+    list.forEach(function (item) {
+      out.set(item, offset);
+      offset += item.length;
+    });
+    return out;
+  }
+
+  function bigToBytes(value) {
+    if (!value || value <= wConst().Z) return new Uint8Array(0);
+    var hex = value.toString(16);
+    if (hex.length % 2) hex = "0" + hex;
+    return hexToBytes(hex);
+  }
+
+  function rlpPrefix(length, offset) {
+    if (length <= 55) return new Uint8Array([offset + length]);
+    var lenBytes = bigToBytes(wBI(length));
+    return concatBytes([new Uint8Array([offset + 55 + lenBytes.length]), lenBytes]);
+  }
+
+  function rlpEncode(item) {
+    if (Array.isArray(item)) {
+      var payload = concatBytes(item.map(rlpEncode));
+      return concatBytes([rlpPrefix(payload.length, 0xc0), payload]);
+    }
+    var bytes = item instanceof Uint8Array ? item : bigToBytes(item);
+    if (bytes.length === 1 && bytes[0] < 0x80) return bytes;
+    return concatBytes([rlpPrefix(bytes.length, 0x80), bytes]);
+  }
+
+  function signHash(hashBytes, privateKeyHex) {
+    var k = wConst();
+    var d = wBI("0x" + privateKeyHex);
+    var z = wBI("0x" + bytesToHex(hashBytes));
+    var half = k.N / k.TWO;
+    for (var attempt = 0; attempt < 64; attempt += 1) {
+      var seed = new Uint8Array(32);
+      window.crypto.getRandomValues(seed);
+      var nonce = wMod(wBI("0x" + bytesToHex(seed)), k.N);
+      if (nonce === k.Z) continue;
+      var point = wMulG(nonce);
+      if (!point) continue;
+      var r = wMod(point.x, k.N);
+      if (r === k.Z) continue;
+      var s = wMod(wInv(nonce, k.N) * (z + r * d), k.N);
+      if (s === k.Z) continue;
+      var recid = Number(point.y & k.ONE) + (point.x >= k.N ? 2 : 0);
+      if (s > half) {
+        s = k.N - s;
+        recid = recid ^ 1;
+      }
+      return { r: r, s: s, recid: recid };
+    }
+    throw new Error("Could not sign the transaction");
+  }
+
+  function signLegacyTransaction(tx, privateKeyHex, chainId) {
+    var base = [
+      bigToBytes(tx.nonce),
+      bigToBytes(tx.gasPrice),
+      bigToBytes(tx.gasLimit),
+      hexToBytes(tx.to),
+      bigToBytes(tx.value),
+      tx.data || new Uint8Array(0),
+      bigToBytes(wBI(chainId)),
+      new Uint8Array(0),
+      new Uint8Array(0)
+    ];
+    var hash = keccak256(rlpEncode(base));
+    var sig = signHash(hash, privateKeyHex);
+    var v = wBI(chainId * 2 + 35) + wBI(sig.recid);
+    return "0x" + bytesToHex(rlpEncode([
+      bigToBytes(tx.nonce),
+      bigToBytes(tx.gasPrice),
+      bigToBytes(tx.gasLimit),
+      hexToBytes(tx.to),
+      bigToBytes(tx.value),
+      tx.data || new Uint8Array(0),
+      bigToBytes(v),
+      bigToBytes(sig.r),
+      bigToBytes(sig.s)
+    ]));
+  }
+
+  function erc20TransferData(to, amount) {
+    var address = String(to || "").replace(/^0x/i, "").toLowerCase();
+    if (address.length !== 40) throw new Error("Enter a valid wallet address");
+    return hexToBytes("a9059cbb" + "000000000000000000000000" + address + wPad32(amount));
+  }
+
+  function rpcOne(chain, method, params) {
+    return rpcCall([{ jsonrpc: "2.0", id: 1, method: method, params: params }], chain.rpcs)
+      .then(function (res) {
+        if (!res[1] || res[1].error) {
+          var detail = res[1] && res[1].error && (res[1].error.message || res[1].error.code);
+          throw new Error(detail ? String(detail) : "Network request failed");
+        }
+        return res[1].result;
+      });
+  }
+
+  function sendTokenOnChain(options) {
+    if (!state || !state.wallet) return Promise.reject(new Error("Create a wallet first"));
+    if (!walletSupported()) return Promise.reject(new Error("This device cannot sign transactions"));
+    var chain = walletChainByKey(options && options.chainKey);
+    if (!chain) return Promise.reject(new Error("Choose a network"));
+    if (!isAddress(options.to)) return Promise.reject(new Error("Enter a valid wallet address"));
+    var token = options.token || null;
+    var amount = options.amountRaw;
+    if (!amount || amount <= wConst().Z) return Promise.reject(new Error("Enter an amount"));
+
+    var data = token ? erc20TransferData(options.to, amount) : new Uint8Array(0);
+    var txTo = token ? token.address : options.to;
+    var value = token ? wConst().Z : amount;
+    var from = state.wallet.address;
+    var privateKey = state.wallet.privateKey;
+    var holder = from.slice(2).toLowerCase();
+
+    return Promise.all([
+      rpcOne(chain, "eth_getTransactionCount", [from, "pending"]),
+      rpcOne(chain, "eth_gasPrice", [])
+    ]).then(function (results) {
+      var nonce = hexToBig(results[0]);
+      var gasPrice = hexToBig(results[1]);
+      var estimate = rpcOne(chain, "eth_estimateGas", [{
+        from: from,
+        to: txTo,
+        data: "0x" + bytesToHex(data),
+        value: "0x" + value.toString(16)
+      }]).catch(function () {
+        /* Fall back to a sane limit: plain transfer vs ERC-20 transfer. */
+        return token ? "0xfe00" : "0x5208";
+      });
+
+      var tokenBalance = token
+        ? rpcOne(chain, "eth_call", [{
+            to: token.address,
+            data: "0x70a08231" + "000000000000000000000000" + holder
+          }, "latest"]).then(function (hex) {
+            return hexToBig(hex);
+          })
+        : Promise.resolve(null);
+
+      return Promise.all([estimate, tokenBalance]).then(function (inner) {
+        return {
+          nonce: nonce,
+          gasPrice: gasPrice,
+          estimate: inner[0],
+          tokenBalance: inner[1]
+        };
+      });
+    }).then(function (prepared) {
+      var gasLimit = hexToBig(prepared.estimate);
+      gasLimit = gasLimit + gasLimit / wBI(4);
+      var tokenBalance = prepared.tokenBalance;
+      if (tokenBalance != null && tokenBalance < amount) {
+        throw new Error("Not enough " + token.symbol + " in this wallet");
+      }
+      var fee = gasLimit * prepared.gasPrice;
+      return rpcOne(chain, "eth_getBalance", [from, "latest"]).then(function (balanceHex) {
+        var balance = hexToBig(balanceHex);
+        var needed = token ? fee : amount + fee;
+        if (balance < needed) {
+          throw new Error("Not enough " + chain.native.symbol + " to pay the network fee" + (token ? "" : " and amount"));
+        }
+        var raw = signLegacyTransaction({
+          nonce: prepared.nonce,
+          gasPrice: prepared.gasPrice,
+          gasLimit: gasLimit,
+          to: txTo,
+          value: value,
+          data: data
+        }, privateKey, chain.chainId);
+        return {
+          raw: raw,
+          chain: chain,
+          token: token,
+          amount: amount,
+          fee: fee,
+          to: options.to
+        };
+      });
+    }).then(function (prepared) {
+      return rpcOne(prepared.chain, "eth_sendRawTransaction", [prepared.raw]).then(function (txHash) {
+        if (!/^0x[0-9a-f]{64}$/i.test(String(txHash || ""))) {
+          throw new Error("The network did not return a transaction hash");
+        }
+        return {
+          chainKey: prepared.chain.key,
+          chainName: prepared.chain.name,
+          symbol: prepared.token ? prepared.token.symbol : prepared.chain.native.symbol,
+          amount: String(options.amountText || "").replace(/,/g, "") ||
+            formatUnits(prepared.amount, prepared.token ? prepared.token.decimals : prepared.chain.native.decimals),
+          to: checksumAddress(prepared.to),
+          tx: String(txHash).toLowerCase(),
+          fee: formatUnits(prepared.fee, prepared.chain.native.decimals),
+          nativeSymbol: prepared.chain.native.symbol
+        };
+      });
     });
   }
 
@@ -1227,6 +1602,7 @@
         alias: cleanName(contact.alias),
         emoji: safeEmoji(contact.emoji) || emojiFor(contactId),
         publicKey: cleanPublicKey(contact.publicKey),
+        wallet: cleanWalletAddress(contact.wallet),
         lastSeen: Number(contact.lastSeen) || 0,
         addedAt: Number(contact.addedAt) || Date.now(),
         auto: !!contact.auto
@@ -1486,6 +1862,7 @@
         alias: "",
         emoji: safeEmoji(emoji) || emojiFor(contactId),
         publicKey: "",
+        wallet: "",
         lastSeen: 0,
         addedAt: Date.now(),
         auto: true
@@ -1798,22 +2175,23 @@
     if (envelope.enc === ENC_VERSION) {
       decryptWireEnvelope(envelope).then(function (payload) {
         if (!state || !payload) return;
-        applyIncomingMessage(envelope, from, contact, messageId, payload.text, payload.image, ts);
+        applyIncomingMessage(envelope, from, contact, messageId, payload.text, payload.image, ts, payload.token);
       }).catch(function () {
         /* Ignore messages this device cannot decrypt. */
       });
       return;
     }
 
-    applyIncomingMessage(envelope, from, contact, messageId, envelope.text, envelope.image, ts);
+    applyIncomingMessage(envelope, from, contact, messageId, envelope.text, envelope.image, ts, envelope.token);
   }
 
-  function applyIncomingMessage(envelope, from, contact, messageId, rawText, rawImage, ts) {
+  function applyIncomingMessage(envelope, from, contact, messageId, rawText, rawImage, ts, rawToken) {
     if (!state) return;
     var text = String(rawText == null ? "" : rawText).slice(0, MAX_TEXT).trim();
     var image = sanitizeImage(rawImage);
+    var token = sanitizeToken(rawToken);
     var isImage = !!image;
-    if (!text && !image) return;
+    if (!text && !image && !token) return;
 
     var to = String(envelope.to || "all");
     var peer = to === "all" ? "community" : from;
@@ -1825,13 +2203,14 @@
     });
     if (duplicate) return;
 
-    var storedText = isImage && !text ? "📷 Photo" : text;
+    var storedText = isImage && !text ? "📷 Photo" : (token ? tokenText(token) : text);
     thread.messages.push({
       id: messageId,
       from: from,
       name: contact.name || cleanName(envelope.name),
       text: safeText(storedText, isImage ? MAX_IMAGE_CAPTION : MAX_TEXT),
       image: image,
+      token: token,
       ts: ts,
       mine: false,
       status: "sent"
@@ -1856,7 +2235,7 @@
     updateSidebar();
 
     if (!inThread && ts > Date.now() - 90000) {
-      notifyMessage(contact, peer, isImage && !text ? "📷 Photo" : text);
+      notifyMessage(contact, peer, isImage && !text ? "📷 Photo" : (token ? tokenText(token) : text));
     }
   }
 
@@ -1953,11 +2332,62 @@
   }
 
   function deliverMessage(peer, message, topic, slug) {
-    return buildWireEnvelope(peer, message.text || "", message.image || "", slug).then(function (envelope) {
+    return buildWireEnvelope(peer, message.text || "", message.image || "", slug, message.token || null).then(function (envelope) {
       envelope.id = message.id;
       envelope.ts = message.ts;
       return publish(envelope, topic);
     });
+  }
+
+  function postTokenChatMessage(info, peer) {
+    if (!state || !info || !peer) return;
+    if (peer === "community" && isAiRoom()) return;
+    var thread = getThread(peer, true);
+    if (!thread) return;
+
+    var message = {
+      id: uid(),
+      from: state.user.id,
+      name: state.user.name,
+      text: tokenText(info),
+      token: {
+        chain: info.chainKey,
+        symbol: info.symbol,
+        amount: info.amount,
+        to: info.to,
+        tx: info.tx
+      },
+      ts: Date.now(),
+      mine: true,
+      status: "sending"
+    };
+    thread.messages.push(message);
+    thread.lastTs = message.ts;
+    thread.unread = 0;
+    saveState();
+    if (ui.mode === "thread" && ui.peer === peer) renderThreadMessages(true);
+    updateSidebar();
+
+    var slug = roomSlug();
+    var topic = peer === "community" ? topicFor(slug) : dmTopicFor(peer);
+    deliverMessage(peer, message, topic, slug)
+      .then(function () {
+        message.status = "sent";
+        saveState();
+        setStatus("online");
+        if (ui.mode === "thread" && ui.peer === peer) renderThreadMessages();
+        updateSidebar();
+      })
+      .catch(function (error) {
+        message.status = "failed";
+        saveState();
+        if (ui.mode === "thread" && ui.peer === peer) renderThreadMessages();
+        updateSidebar();
+        var reason = error && error.message ? error.message : "";
+        toastMsg(reason
+          ? "Tokens were sent on-chain, but the chat note could not be posted. Tap it to retry. (" + reason + ")"
+          : "Tokens were sent on-chain, but the chat note could not be posted. Tap it to retry.", 6200);
+      });
   }
 
   function askLuckyAI(message) {
@@ -2151,6 +2581,7 @@
       '<div class="cm-composer" data-role="composer" hidden>' +
         '<input type="file" class="cm-fileinput" data-role="imagefile" accept="image/*" aria-hidden="true" tabindex="-1">' +
         '<div class="cm-composewrap">' +
+          '<button type="button" class="cm-attach cm-coinbtn" data-action="send-token" title="Send tokens" aria-label="Send tokens"><span class="cm-coinico">🪙</span></button>' +
           '<button type="button" class="cm-attach" data-action="pick-image" title="Send a photo" aria-label="Send a photo"><span class="icon image"></span></button>' +
           '<textarea class="cm-input" data-role="input" rows="1" maxlength="1200" placeholder="Message…" enterkeyhint="send" aria-label="Message"></textarea>' +
           '<button type="button" class="cm-send" data-action="send" title="Send" aria-label="Send"><span class="icon send"></span></button>' +
@@ -2340,6 +2771,7 @@
     var input = $root.querySelector('[data-role="input"]');
     var send = $root.querySelector('[data-action="send"]');
     var attach = $root.querySelector('[data-action="pick-image"]');
+    var coin = $root.querySelector('[data-action="send-token"]');
     var counter = $root.querySelector('[data-role="counter"]');
     var hint = $root.querySelector('[data-role="hint"]');
     if (!input) return;
@@ -2376,6 +2808,13 @@
     if (attach) {
       attach.disabled = !(ui.mode === "thread" && ui.peer) ||
         (ui.peer === "community" && isAiRoom());
+    }
+    if (coin) {
+      coin.disabled = !(ui.mode === "thread" && ui.peer) ||
+        (ui.peer === "community" && isAiRoom());
+      coin.title = coin.disabled
+        ? "Tokens are not available in the AI Room"
+        : "Send tokens";
     }
 
     var length = String(input.value || "").length;
@@ -2593,6 +3032,27 @@
       "</div></div>";
   }
 
+  function shortAddress(address) {
+    var text = String(address || "");
+    if (text.length <= 14) return text;
+    return text.slice(0, 8) + "…" + text.slice(-6);
+  }
+
+  function tokenHTML(token) {
+    var chain = walletChainByKey(token.chain);
+    var url = chain ? chain.explorer + token.tx : "";
+    return '<div class="cm-token">' +
+      '<div class="cm-token-top"><span class="cm-token-ico">🪙</span>' +
+        '<b>' + escapeHTML(token.amount + " " + token.symbol) + "</b></div>" +
+      '<div class="cm-token-sub">' + escapeHTML(chain ? chain.name : token.chain) +
+        " · to " + escapeHTML(shortAddress(token.to)) + "</div>" +
+      (url
+        ? '<button type="button" class="cm-token-link" data-action="open-tx" data-url="' +
+          escapeHTML(url) + '">View transaction ↗</button>'
+        : "") +
+      "</div>";
+  }
+
   function messageHTML(message) {
     var mine = !!message.mine;
     var isAi = message.from === AI_ID;
@@ -2629,7 +3089,10 @@
         '<img class="cm-image" src="' + escapeHTML(message.image) + '" alt="Shared photo" loading="lazy">' +
         "</button>";
     }
-    if (message.text && !(message.image && message.text === "📷 Photo")) {
+    if (message.token) {
+      bubble += tokenHTML(message.token);
+    }
+    if (message.text && !message.token && !(message.image && message.text === "📷 Photo")) {
       bubble += '<div class="cm-text">' + formatMessageText(message.text) + "</div>";
     }
     if (!bubble) bubble = '<div class="cm-text">📷 Photo</div>';
@@ -2831,7 +3294,7 @@
           " · Last sync: " + escapeHTML(lastSync) + "</p>" +
         '<p class="cm-muted">🔒 End-to-end encrypted. Room messages use AES-256-GCM with a key derived from the room code. Direct messages use ECDH P-256 key exchange plus AES-256-GCM, so only you and your friend can read them. The relay stores ciphertext, not your messages.</p>' +
         '<p class="cm-muted">Your private key stays on this phone and is only included in backups you export. Keep a backup if you reinstall Acode. Preset rooms use public room codes, so create your own private room code for sensitive chats. Lucky AI replies are stored only on this phone, but what you type in the AI Room is sent to luckyai-blush.vercel.app to get an answer.</p>' +
-        '<p class="cm-muted">Your Celo wallet key is created and stored on this phone. It is never sent to the relay, to friends or to Lucky AI. Balances are read from the public Celo network using only your address.</p>' +
+        '<p class="cm-muted">Your multi-chain wallet key is created and stored on this phone. It is never sent to the relay, to friends or to Lucky AI. Balances are read from the public Celo, BNB Smart Chain, Polygon and Ethereum networks using only your address. You can send tokens to any 0x wallet address; transfers are signed on this phone.</p>' +
         (ui.lastError ? '<p class="cm-muted">Last connection error: ' + escapeHTML(ui.lastError) + "</p>" : "") +
       "</div>";
   }
@@ -3023,6 +3486,10 @@
       joinRoom(target.dataset.slug);
     } else if (action === "pick-image") {
       pickImage();
+    } else if (action === "send-token") {
+      openSendTokenModal({ post: true });
+    } else if (action === "open-tx") {
+      openExplorerLink(target.dataset.url);
     } else if (action === "view-image") {
       openImageModal(target.dataset.id);
     } else if (action === "send") {
@@ -3057,6 +3524,8 @@
       walletReveal();
     } else if (action === "wallet-save-hdo") {
       saveHdoToken();
+    } else if (action === "wallet-send") {
+      openSendTokenModal({ post: false });
     } else if (action === "wallet-import") {
       walletImportModal();
     } else if (action === "wallet-create") {
@@ -3539,6 +4008,20 @@
       });
     }
 
+    var walletText = cmEl("p", "cm-muted", contact && isAddress(contact.wallet)
+      ? "Friend wallet: " + contact.wallet
+      : "No wallet address saved for this friend yet.");
+    modal.body.appendChild(walletText);
+
+    var walletBtn = document.createElement("button");
+    walletBtn.type = "button";
+    walletBtn.className = "cm-btn";
+    walletBtn.textContent = contact && isAddress(contact.wallet) ? "Change friend wallet" : "Save friend wallet";
+    walletBtn.onclick = function () {
+      modal.close();
+      editContactWallet(peer);
+    };
+
     var copyBtn = document.createElement("button");
     copyBtn.type = "button";
     copyBtn.className = "cm-btn";
@@ -3567,9 +4050,54 @@
       removeContact(peer);
     };
 
+    modal.actions.appendChild(walletBtn);
     modal.actions.appendChild(copyBtn);
     modal.actions.appendChild(clearBtn);
     modal.actions.appendChild(removeBtn);
+  }
+
+  function editContactWallet(peer) {
+    if (!state) return;
+    var contact = contactFor(peer);
+    if (!contact) return;
+    var modal = openModal("Friend wallet address");
+    modal.body.appendChild(cmEl("p", "cm-muted",
+      "Save this friend's wallet address to fill it in automatically when you send tokens in this chat. " +
+      "Only save an address you trust. Leave it empty to remove it."));
+    var input = cmEl("input", "cm-input");
+    input.type = "text";
+    input.placeholder = "0x… (42 characters)";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.value = isAddress(contact.wallet) ? contact.wallet : "";
+    modal.body.appendChild(input);
+
+    var cancel = cmEl("button", "cm-btn", "Cancel");
+    cancel.type = "button";
+    cancel.onclick = closeModal;
+
+    var save = cmEl("button", "cm-btn primary", "Save");
+    save.type = "button";
+    save.onclick = function () {
+      var value = String(input.value || "").trim();
+      if (!value) {
+        contact.wallet = "";
+        saveState();
+        modal.close();
+        toastMsg("Friend wallet removed");
+        return;
+      }
+      if (!isAddress(value)) {
+        toastMsg("Enter a valid 0x wallet address (42 characters)");
+        return;
+      }
+      contact.wallet = cleanWalletAddress(value);
+      saveState();
+      modal.close();
+      toastMsg("Friend wallet saved");
+    };
+    modal.actions.appendChild(cancel);
+    modal.actions.appendChild(save);
   }
 
   function confirmClearThread(peer) {
@@ -3625,7 +4153,7 @@
     if (!state) return;
     confirmDialog(
       "Reset identity",
-      "This creates a new Community ID and deletes your contacts and chats on this phone. Friends will no longer be able to reach you at the old ID. Your Celo wallet is NOT deleted. Export a backup first if you are unsure.",
+      "This creates a new Community ID and deletes your contacts and chats on this phone. Friends will no longer be able to reach you at the old ID. Your wallet is NOT deleted. Export a backup first if you are unsure.",
       "Reset everything",
       function () {
         state.user = makeUser();
@@ -3780,40 +4308,83 @@
   function walletBalancesHTML() {
     var w = ui.wallet;
     var d = w.data;
-    function val(v) {
-      if (v != null) return v;
-      return w.loading ? "…" : "—";
+    var html = "";
+
+    WALLET_CHAINS.forEach(function (chain) {
+      var entry = null;
+      if (d && Array.isArray(d.chains)) {
+        d.chains.forEach(function (item) {
+          if (item && item.key === chain.key) entry = item;
+        });
+      }
+      var chainData = entry && entry.ok ? entry.data : null;
+      var error = entry && !entry.ok ? entry.error : "";
+
+      html += '<div class="cm-wchain">' +
+        '<div class="cm-wchain-head"><span>' + escapeHTML(chain.name) + "</span>" +
+          '<span class="cm-wnet">' + escapeHTML(chain.native.symbol) + "</span></div>";
+
+      html += walletRowHTML(
+        chain.native.symbol,
+        chainData ? chainData.native.amount : (w.loading ? "…" : "—"),
+        !chainData
+      );
+
+      chainTokens(chain).forEach(function (token) {
+        var found = null;
+        if (chainData) {
+          chainData.tokens.forEach(function (item) {
+            if (item.symbol === token.symbol) found = item;
+          });
+        }
+        html += walletRowHTML(
+          token.symbol,
+          found ? found.amount : (w.loading ? "…" : "—"),
+          !found
+        );
+      });
+
+      if (error) {
+        html += '<div class="cm-werror">' + escapeHTML(error) + "</div>";
+      }
+      html += "</div>";
+    });
+
+    var status;
+    if (w.loading && !d) {
+      status = "Loading balances from 4 networks…";
+    } else if (w.error) {
+      status = "Could not load balances (" + w.error + "). Tap Refresh.";
+    } else if (d) {
+      status = "Updated " + relativeTime(d.updatedAt);
+    } else {
+      status = "Not loaded yet";
     }
-    var hdoSet = !!hdoTokenAddress();
-    var hdoLabel = d && d.hdoSymbol ? d.hdoSymbol : "HDO";
-    var status = w.error
-      ? "Could not load balances (" + w.error + "). Tap Refresh."
-      : (d ? "Updated " + relativeTime(d.updatedAt) : (w.loading ? "Loading balances…" : "Not loaded yet"));
-    return walletRowHTML("CELO", val(d && d.celo), !d || d.celo == null) +
-      walletRowHTML(hdoLabel, hdoSet ? val(d && d.hdo) : "set contract", !hdoSet || !d || d.hdo == null) +
-      walletRowHTML("USDT", val(d && d.usdt), !d || d.usdt == null) +
-      '<p class="cm-muted cm-wstatus">' + escapeHTML(status) + "</p>";
+    return html + '<p class="cm-muted cm-wstatus">' + escapeHTML(status) + "</p>";
   }
 
   function walletCardHTML() {
     if (!state) return "";
     if (!walletSupported()) {
-      return '<div class="cm-card"><h3>Celo wallet</h3>' +
+      return '<div class="cm-card"><h3>Multi-chain wallet</h3>' +
         '<p class="cm-muted">This device’s WebView does not support the features a wallet needs (BigInt and secure random numbers). Update Android System WebView and reopen Acode.</p></div>';
     }
     if (!state.wallet) {
-      return '<div class="cm-card"><h3>Celo wallet</h3>' +
+      return '<div class="cm-card"><h3>Multi-chain wallet</h3>' +
         '<p>No wallet on this phone yet.</p>' +
         '<div class="cm-button-row"><button type="button" class="cm-btn primary" data-action="wallet-create">Create wallet</button></div></div>';
     }
     return '<div class="cm-card cm-wallet">' +
-      "<h3>Celo wallet</h3>" +
-      '<p>Your EVM address on Celo mainnet. It was created on this phone and only you hold the key.</p>' +
+      "<h3>Multi-chain wallet</h3>" +
+      '<p>One EVM address for <b>Celo</b>, <b>BNB Smart Chain</b>, <b>Polygon</b> and <b>Ethereum</b>. It was created on this phone and only you hold the key.</p>' +
       '<div class="cm-idbox cm-addrbox"><code>' + escapeHTML(state.wallet.address) + "</code>" +
         '<button type="button" class="cm-chip" data-action="wallet-copy">Copy</button></div>' +
       '<div class="cm-wbal" data-role="wallet-balances">' + walletBalancesHTML() + "</div>" +
       '<div class="cm-button-row">' +
+        '<button type="button" class="cm-btn primary" data-action="wallet-send">Send tokens</button>' +
         '<button type="button" class="cm-btn" data-action="wallet-refresh">Refresh</button>' +
+      "</div>" +
+      '<div class="cm-button-row">' +
         '<button type="button" class="cm-btn" data-action="wallet-reveal">Back up key</button>' +
         '<button type="button" class="cm-btn" data-action="wallet-import">Import wallet</button>' +
       "</div>" +
@@ -3825,9 +4396,9 @@
             escapeHTML((state.settings && state.settings.hdoToken) || HDO_TOKEN_DEFAULT) + '">' +
           '<button type="button" class="cm-btn primary" data-action="wallet-save-hdo">Save</button>' +
         "</div>" +
-        '<p class="cm-muted">Only paste the official HDO contract. The balance is read straight from Celo; nothing is sent. USDT uses the Tether contract on Celo.</p>' +
+        '<p class="cm-muted">HDO is read from the contract above on Celo. G$ (GoodDollar) uses the official contracts on Celo and Ethereum; USDT and USDC use the canonical contracts on each network.</p>' +
       "</details>" +
-      '<p class="cm-muted">Only send CELO, HDO and USDT on the <b>Celo</b> network to this address. Back up your key: if you lose this phone without a backup, the funds are gone.</p>' +
+      '<p class="cm-muted">Never share your private key. Back up your key: if you lose this phone without a backup, the funds are gone. A token transfer is public on its blockchain even when the chat note is encrypted.</p>' +
     "</div>";
   }
 
@@ -3897,6 +4468,225 @@
     toastMsg(value ? "HDO contract saved" : "Using the default HDO contract");
   }
 
+  function openExplorerLink(url) {
+    if (!url) return;
+    try {
+      var system = safeRequire("system");
+      if (system && typeof system.openInBrowser === "function") {
+        system.openInBrowser(String(url));
+        return;
+      }
+    } catch (e) {
+      /* fall through */
+    }
+    try {
+      window.open(String(url), "_blank");
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  function walletAssetBalance(chainKey, symbol) {
+    var data = ui.wallet && ui.wallet.data;
+    if (!data || !Array.isArray(data.chains)) return null;
+    var entry = null;
+    data.chains.forEach(function (item) {
+      if (item && item.key === chainKey) entry = item;
+    });
+    if (!entry || !entry.ok || !entry.data) return null;
+    if (entry.data.native.symbol === symbol) return entry.data.native;
+    var found = null;
+    entry.data.tokens.forEach(function (token) {
+      if (token.symbol === symbol) found = token;
+    });
+    return found;
+  }
+
+  function openSendTokenModal(options) {
+    if (!state) return;
+    var post = !!(options && options.post);
+    if (post) {
+      if (ui.mode !== "thread" || !ui.peer) {
+        toastMsg("Open a room or direct chat before sending tokens in chat");
+        return;
+      }
+      if (ui.peer === "community" && isAiRoom()) {
+        toastMsg("Tokens can't be sent from the AI Room. Open another room or a direct chat.");
+        return;
+      }
+    }
+    if (!walletSupported()) {
+      toastMsg("This device cannot sign transactions. Update Android System WebView.");
+      return;
+    }
+    if (!state.wallet && !ensureWallet()) {
+      toastMsg("Could not create a wallet on this device");
+      return;
+    }
+
+    var peerAtOpen = post ? ui.peer : null;
+    var modal = openModal(post ? "Send tokens in this chat" : "Send tokens");
+
+    var chainField = cmEl("div", "cm-field");
+    chainField.appendChild(cmEl("label", "cm-label", "Network"));
+    var chainSelect = cmEl("select", "cm-input cm-select");
+    WALLET_CHAINS.forEach(function (item) {
+      var option = document.createElement("option");
+      option.value = item.key;
+      option.textContent = item.name + " · " + item.native.symbol;
+      chainSelect.appendChild(option);
+    });
+    chainField.appendChild(chainSelect);
+    modal.body.appendChild(chainField);
+
+    var assetField = cmEl("div", "cm-field");
+    assetField.appendChild(cmEl("label", "cm-label", "Token"));
+    var assetSelect = cmEl("select", "cm-input cm-select");
+    assetField.appendChild(assetSelect);
+    modal.body.appendChild(assetField);
+
+    function currentChain() {
+      return walletChainByKey(chainSelect.value) || WALLET_CHAINS[0];
+    }
+
+    function currentAsset() {
+      var active = currentChain();
+      var value = String(assetSelect.value || "native");
+      if (value === "native") {
+        return { symbol: active.native.symbol, decimals: active.native.decimals, address: "", native: true };
+      }
+      var tokens = chainTokens(active);
+      for (var i = 0; i < tokens.length; i += 1) {
+        if (String(tokens[i].address).toLowerCase() === value.toLowerCase()) return tokens[i];
+      }
+      return { symbol: active.native.symbol, decimals: active.native.decimals, address: "", native: true };
+    }
+
+    var toField = cmEl("div", "cm-field");
+    toField.appendChild(cmEl("label", "cm-label", "Recipient wallet address"));
+    var toInput = cmEl("input", "cm-input");
+    toInput.type = "text";
+    toInput.placeholder = "0x… (42 characters)";
+    toInput.autocomplete = "off";
+    toInput.spellcheck = false;
+    if (post && peerAtOpen !== "community") {
+      var contact = contactFor(peerAtOpen);
+      if (contact && isAddress(contact.wallet)) toInput.value = contact.wallet;
+    }
+    toField.appendChild(toInput);
+    modal.body.appendChild(toField);
+
+    var amountField = cmEl("div", "cm-field");
+    amountField.appendChild(cmEl("label", "cm-label", "Amount"));
+    var amountInput = cmEl("input", "cm-input");
+    amountInput.type = "text";
+    amountInput.inputMode = "decimal";
+    amountInput.placeholder = "0.0";
+    amountInput.autocomplete = "off";
+    amountField.appendChild(amountInput);
+    modal.body.appendChild(amountField);
+
+    var info = cmEl("p", "cm-muted cm-tokeninfo", "");
+    modal.body.appendChild(info);
+
+    var note = cmEl("p", "cm-muted",
+      "The transfer is signed on this phone and sent to the blockchain. It cannot be undone. " +
+      "The chat note is end-to-end encrypted, but the transfer itself is public on " + "the blockchain.");
+    modal.body.appendChild(note);
+
+    function updateInfo() {
+      var active = currentChain();
+      var asset = currentAsset();
+      var balance = walletAssetBalance(active.key, asset.symbol);
+      info.textContent = "Available: " +
+        (balance ? balance.amount + " " + asset.symbol : "not loaded — refresh the wallet first") +
+        "\nNetwork fee is paid in " + active.native.symbol + ".";
+    }
+
+    function fillAssets() {
+      var active = currentChain();
+      assetSelect.innerHTML = "";
+      var nativeOption = document.createElement("option");
+      nativeOption.value = "native";
+      nativeOption.textContent = active.native.symbol + " (native)";
+      assetSelect.appendChild(nativeOption);
+      chainTokens(active).forEach(function (token) {
+        var option = document.createElement("option");
+        option.value = token.address;
+        option.textContent = token.symbol;
+        assetSelect.appendChild(option);
+      });
+      assetSelect.value = "native";
+      updateInfo();
+    }
+
+    chainSelect.onchange = fillAssets;
+    assetSelect.onchange = updateInfo;
+    fillAssets();
+
+    var cancel = cmEl("button", "cm-btn", "Cancel");
+    cancel.type = "button";
+    cancel.onclick = closeModal;
+
+    var send = cmEl("button", "cm-btn primary", "Send");
+    send.type = "button";
+    send.onclick = function () {
+      var active = currentChain();
+      var asset = currentAsset();
+      var to = String(toInput.value || "").trim();
+      var amountText = String(amountInput.value || "").trim();
+      if (!isAddress(to)) {
+        toastMsg("Enter a valid 0x wallet address (42 characters)");
+        return;
+      }
+      var amountRaw;
+      try {
+        amountRaw = parseUnits(amountText, asset.decimals);
+      } catch (error) {
+        toastMsg(error && error.message ? error.message : "Enter a valid amount");
+        return;
+      }
+      if (ui.sendingToken) return;
+
+      modal.close();
+      confirmDialog(
+        "Confirm token transfer",
+        "Send " + amountText + " " + asset.symbol + " on " + active.name + " to " +
+          checksumAddress(to) + "?\n\nThis on-chain transfer cannot be undone. The network fee is paid in " +
+          active.native.symbol + ".",
+        "Send now",
+        function () {
+          ui.sendingToken = true;
+          toastMsg("Signing and sending on " + active.name + "…", 9000);
+          sendTokenOnChain({
+            chainKey: active.key,
+            token: asset.native ? null : asset,
+            to: to,
+            amountRaw: amountRaw,
+            amountText: amountText
+          }).then(function (result) {
+            toastMsg("✅ Sent " + result.amount + " " + result.symbol + " on " +
+              result.chainName + " · fee " + result.fee + " " + result.nativeSymbol, 8000);
+            resetWalletView();
+            if ($root && pageRef && pageRef.isConnected) {
+              if (ui.mode === "tabs" && ui.tab === "me") render();
+              refreshWallet(true);
+            }
+            if (post && peerAtOpen) postTokenChatMessage(result, peerAtOpen);
+          }).catch(function (error) {
+            toastMsg("Token not sent: " + (error && error.message ? error.message : String(error)), 8000);
+          }).then(function () {
+            ui.sendingToken = false;
+          });
+        },
+        true
+      );
+    };
+
+    modal.actions.appendChild(cancel);
+    modal.actions.appendChild(send);
+  }
+
   function walletImportModal() {
     if (!state || !walletSupported()) return;
     var modal = openModal("Import wallet");
@@ -3934,7 +4724,7 @@
       modal.close();
       confirmDialog(
         "Use this wallet?",
-        "Your Celo wallet will become " + wallet.address + ". Your current wallet stays saved under Back up key.",
+        "Your wallet will become " + wallet.address + ". Your current wallet stays saved under Back up key.",
         "Import wallet",
         function () {
           applyWalletImport(wallet);
@@ -4084,7 +4874,7 @@
     var json = JSON.stringify(payload, null, 2);
     var modal = openModal("Backup");
     modal.body.appendChild(cmEl("p", "",
-      "A backup holds your Community ID, contacts, messages, your chat encryption key and your Celo wallet private key. Encrypt it with a passphrase and keep the file somewhere safe."));
+      "A backup holds your Community ID, contacts, messages, your chat encryption key and your wallet private key. Encrypt it with a passphrase and keep the file somewhere safe."));
 
     var pass = cmEl("input", "cm-input");
     pass.type = "password";
@@ -4191,7 +4981,7 @@
     if (!state) return;
     var modal = openModal("Import backup");
     modal.body.appendChild(cmEl("p", "",
-      "Paste a Community backup below. Importing replaces your ID, contacts and messages on this phone. If the backup has a different Celo wallet, your current wallet is kept in the key backup list."));
+      "Paste a Community backup below. Importing replaces your ID, contacts and messages on this phone. If the backup has a different wallet, your current wallet is kept in the key backup list."));
 
     var pass = cmEl("input", "cm-input");
     pass.type = "password";

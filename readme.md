@@ -1,6 +1,6 @@
 # Community Chat
 
-Community Chat is a private, local-first chat plugin for Acode with preset rooms, a built-in AI helper, direct chats, photo sharing and a built-in Celo wallet.
+Community Chat is a private, local-first chat plugin for Acode with preset rooms, a built-in AI helper, direct chats, photo sharing, token transfers and a built-in multi-chain wallet.
 
 ## Features
 
@@ -12,7 +12,8 @@ Community Chat is a private, local-first chat plugin for Acode with preset rooms
 - **End-to-end encryption**: Relay messages are encrypted on your device. Rooms use AES-256-GCM with a key derived from the room code; direct chats use ECDH P-256 key exchange plus AES-256-GCM.
 - **Presence**: See who is online in the current room.
 - **Notifications**: Get a notification when a new message arrives.
-- **Celo wallet**: Every user (new and existing) gets an EVM wallet on Celo, created on the phone. The **Me** tab shows the address and live **CELO**, **HDO** and **USDT** balances, with copy, refresh and private-key backup.
+- **Multi-chain wallet**: Every user (new and existing) gets an EVM wallet, created on the phone. The **Me** tab shows the address and live balances on **Celo**, **BNB Smart Chain**, **Polygon** and **Ethereum**, including **G$**, **USDT**, **USDC** and **HDO**, with copy, refresh and private-key backup.
+- **Token transfers**: Send native coins or tokens to any `0x` wallet address from the wallet, or tap the 🪙 button in a room or direct chat to send and post an encrypted receipt card. Token sending is unavailable in the AI Room.
 - **Encrypted backup**: Export your chats, contacts and wallet key protected by a passphrase (PBKDF2 + AES-256-GCM).
 - **Safety number**: In a direct chat, open Chat options and compare the safety number with your friend to confirm nobody is impersonating them.
 
@@ -33,17 +34,27 @@ Tap a room chip in the **Chats** tab to switch rooms. You can also set a custom 
 1. Open the **Community** app from the sidebar.
 2. Pick a room chip, or open **Me** to set a custom room code.
 3. Tap **Copy invite message** in **Me** and send it to a friend. They can paste the whole invite (ID + secure key) into **People → Add contact**.
-4. Tap the photo button in the composer to send an image.
+4. Tap the photo button in the composer to send an image, or the 🪙 button to send tokens in a room or direct chat (not in the AI Room).
 5. In the **AI Room**, type a question and Lucky AI will reply.
 
-## Celo wallet
+## Multi-chain wallet
 
-- A wallet is created automatically the first time you open v1.3.0 (existing users included). The private key never leaves your phone.
-- Balances are read from the public Celo network (`forno.celo.org`) using only your address. The plugin cannot send funds; use **Back up key** to import the key into a full wallet app.
-- USDT is the Tether contract on Celo. HDO uses the official HDO contract `0x0b7e844Dd950558295eB5Ee7d5f57d18c1BEeb02` by default; it can be overridden in **Token settings** in the wallet card.
-- Already have a Celo wallet? Tap **Import wallet** in the wallet card and paste its private key. The address and balances switch to that wallet, and your previous wallet's key stays under **Back up key**.
+- A wallet is created automatically the first time you open v1.3.0 or newer (existing users included). The private key never leaves your phone.
+- Balances are read from public RPC endpoints for **Celo**, **BNB Smart Chain**, **Polygon** and **Ethereum** using only your address.
+- Supported assets include CELO, BNB, POL, ETH, G$ (GoodDollar on Celo and Ethereum), USDT (all four networks), USDC (Celo, Polygon, Ethereum) and HDO (Celo).
+- G$ uses the official GoodDollar contracts: `0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A` on Celo (18 decimals) and `0x67C5870b4A41D4Ebef24d2456547A03F1f3e094B` on Ethereum (2 decimals).
+- HDO uses `0x0b7e844Dd950558295eB5Ee7d5f57d18c1BEeb02` on Celo by default; it can be overridden in **Token settings**.
+- Already have a wallet? Tap **Import wallet** in the wallet card and paste its private key. The address and balances switch to that wallet, and your previous wallet's key stays under **Back up key**.
 - Resetting your chat identity does **not** delete the wallet. Importing a backup with a different wallet keeps your current one in the key backup list.
-- Send only CELO, HDO and USDT on the Celo network to this address. Lose the key and the funds are gone.
+
+## Sending tokens
+
+- Tap **Send tokens** in the wallet, or the 🪙 button inside a room or direct chat.
+- Choose a network and token, paste the recipient's `0x` wallet address, enter an amount and confirm. The transaction is signed on the phone and broadcast directly to the selected network.
+- You need a small amount of the network's native coin (CELO, BNB, POL or ETH) to pay the network fee. The plugin checks the fee and your token balance before signing.
+- When you send from a chat, an encrypted receipt card with the amount, recipient and a block-explorer link is posted to that room or direct chat. In a direct chat you can save your friend's wallet address in **Chat options** so it is filled in automatically.
+- Token sending is disabled in the **AI Room** because that room is a private conversation with Lucky AI, not with other users.
+- On-chain transfers are public and irreversible, even though the chat receipt is end-to-end encrypted. Double-check the address before confirming. Lose your key and the funds are gone.
 
 ## Privacy
 
@@ -56,6 +67,7 @@ Tap a room chip in the **Chats** tab to switch rooms. You can also set a custom 
 - Encryption requires the device WebView to support WebCrypto. If it does not, sending is blocked instead of falling back to plaintext.
 - Preset rooms use public codes, so the room header shows “public room”. Create your own room code for private groups.
 - AI Room replies are stored on the device and not relayed to other users, but the text you type in the AI Room is sent to the Lucky AI server (`luckyai-blush.vercel.app`) to get an answer.
+- Token receipts posted in chats are end-to-end encrypted like other messages. The blockchain transaction itself is public: the sender, recipient, amount and token are visible on the relevant chain's explorer.
 
 ## Author
 

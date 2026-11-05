@@ -1,7 +1,7 @@
 {
   "id": "mrjeffagency.community",
   "name": "Community Chat",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "main": "main.js",
   "readme": "readme.md",
   "icon": "icon.png",
@@ -28,7 +28,13 @@
     "celo",
     "evm",
     "crypto wallet",
-    "encrypted backup"
+    "encrypted backup",
+    "bnb smart chain",
+    "polygon",
+    "ethereum",
+    "gooddollar",
+    "g$",
+    "token transfer"
   ],
   "author": {
     "name": "MrJeffAgency",
