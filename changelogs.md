@@ -1,8 +1,13 @@
 # Changelog
 
-## 1.2.1
+## 1.2.6
+- Version bump for plugin store resubmission.
 - Fixed the titlebar menu button not responding to taps.
 - The titlebar menu now opens Community settings reliably.
+- Rebuilt the installable package.
+
+## 1.2.1
+- Internal build with the titlebar menu fix; superseded by 1.2.6.
 
 ## 1.2.0
 - Added end-to-end encryption for relay messages.

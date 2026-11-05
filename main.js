@@ -19,7 +19,7 @@
    * ------------------------------------------------------------------ */
 
   var PLUGIN_ID = "mrjeffagency.community";
-  var VERSION = "1.2.1";
+  var VERSION = "1.2.6";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
