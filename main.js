@@ -4527,6 +4527,19 @@
     var peerAtOpen = post ? ui.peer : null;
     var modal = openModal(post ? "Send tokens in this chat" : "Send tokens");
 
+    if (post) {
+      var where;
+      if (peerAtOpen === "community") {
+        where = "You are in " + roomInfo(state.settings.room).name +
+          ". A room has no shared wallet, so paste the wallet address of the person you want to pay below. " +
+          "The tokens go on-chain to that address; everyone in the room only sees the encrypted receipt.";
+      } else {
+        where = "This sends tokens on-chain to your friend's wallet address. " +
+          "If you save their address in Chat options it will be filled in for you next time.";
+      }
+      modal.body.appendChild(cmEl("p", "cm-muted cm-tokeninfo", where));
+    }
+
     var chainField = cmEl("div", "cm-field");
     chainField.appendChild(cmEl("label", "cm-label", "Network"));
     var chainSelect = cmEl("select", "cm-input cm-select");
