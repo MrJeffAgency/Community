@@ -1,5 +1,5 @@
 /* Community Chat — web app */
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
@@ -23,7 +23,69 @@ const PRESENCE_MS = 15 * 60 * 1000;
 const ONLINE_MS = 20 * 60 * 1000;
 const MAX_TEXT = 1200;
 const MAX_IMAGE_CHARS = 220000;
+const MAX_PROFILE_CHARS = 120000;
 const MAX_MESSAGES = 250;
+const WALLET_REFRESH_MS = 30000;
+
+const GDOLLAR_CELO = "0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A";
+const USDT_CELO = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e";
+const USDC_CELO = "0xcebA9300f2b948710d2653dD7B07f33A8B32118C";
+const BTC_CELO = "0x8aC2901Dd8A1F17a1A4768A6bA4C3751e3995B2D";
+const HDO_TOKEN_DEFAULT = "0x0b7e844Dd950558295eB5Ee7d5f57d18c1BEeb02";
+const USDT_BSC = "0x55d398326f99059fF775485246999027B3197955";
+const USDC_BSC = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d";
+const BTC_BSC = "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c";
+const ETH_BSC = "0x2170Ed0880ac9A755fd29B2688956BD959F933F8";
+
+const WALLET_CHAINS = [
+  {
+    key: "celo",
+    name: "Celo",
+    chainId: 42220,
+    native: { symbol: "CELO", decimals: 18 },
+    rpcs: ["https://forno.celo.org", "https://celo-rpc.publicnode.com"],
+    explorer: "https://celoscan.io/tx/",
+    tokens: [
+      { symbol: "G$", address: GDOLLAR_CELO, decimals: 18 },
+      { symbol: "USDT", address: USDT_CELO, decimals: 6 },
+      { symbol: "USDC", address: USDC_CELO, decimals: 6 },
+      { symbol: "HDO", address: HDO_TOKEN_DEFAULT, decimals: 18, custom: "hdo" },
+      { symbol: "BTC", address: BTC_CELO, decimals: 8 }
+    ]
+  },
+  {
+    key: "bsc",
+    name: "BSC",
+    chainId: 56,
+    native: { symbol: "BNB", decimals: 18 },
+    rpcs: ["https://bsc-dataseed.binance.org", "https://bsc-dataseed1.defibit.io", "https://bsc-dataseed1.ninicoin.io"],
+    explorer: "https://bscscan.com/tx/",
+    tokens: [
+      { symbol: "USDT", address: USDT_BSC, decimals: 18 },
+      { symbol: "USDC", address: USDC_BSC, decimals: 18 },
+      { symbol: "BTC", address: BTC_BSC, decimals: 18 },
+      { symbol: "ETH", address: ETH_BSC, decimals: 18 }
+    ]
+  }
+];
+
+const PUBLIC_ROOM_TOKEN = "HDO";
+const PRIVATE_CHAT_TOKENS = ["USDT", "USDC", "HDO", "BTC"];
+const ERC20_ABI = [
+  "function balanceOf(address owner) view returns (uint256)",
+  "function transfer(address to, uint256 amount) returns (bool)",
+  "function decimals() view returns (uint8)",
+  "function symbol() view returns (string)"
+];
+const NFT_ABI = ["function tokenURI(uint256 tokenId) view returns (string)"];
+
+const DEFAULT_PROFILE_IMAGE = "data:image/svg+xml;utf8," + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">' +
+  '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5b4bdb"/><stop offset="1" stop-color="#a855f7"/></linearGradient></defs>' +
+  '<rect width="96" height="96" rx="48" fill="url(#g)"/>' +
+  '<text x="48" y="62" font-size="46" text-anchor="middle" fill="white">👤</text></svg>'
+);
+
 const ROOMS = [
   { slug: "general", name: "General", emoji: "💬", desc: "Say hello to everyone" },
   { slug: "ai", name: "AI Room", emoji: "🤖", desc: "Chat with Lucky AI" },
@@ -33,13 +95,16 @@ const ROOMS = [
 ];
 
 let state = null;
-let ui = { tab: "chats", mode: "tabs", peer: null, loading: false };
+let ui = { tab: "chats", mode: "tabs", peer: null, status: "connecting", wallet: { data: null, loading: false, error: "", at: 0 } };
 let running = true;
 let pollTimer = null;
 let pollInFlight = false;
 let presenceInFlight = false;
 let lastPresenceAt = 0;
 let $root = null;
+const roomKeyPromises = {};
+const dmKeyPromises = {};
+const peerKeyFetches = {};
 
 /* ---------- utils ---------- */
 function uid() { return "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
@@ -50,6 +115,7 @@ function slugFor(v) { var s = String(v == null ? "" : v).trim().toLowerCase().re
 function roomSlug() { return slugFor(state ? state.settings.room : DEFAULT_ROOM); }
 function roomInfo(v) { var s = slugFor(v); for (var i = 0; i < ROOMS.length; i++) if (ROOMS[i].slug === s) return ROOMS[i]; return { slug: s, name: s, emoji: "💬", desc: "Custom room" }; }
 function isPresetRoom(v) { var s = slugFor(v); return ROOMS.some(function (r) { return r.slug === s; }); }
+function isAiRoom() { return roomSlug() === "ai"; }
 function topicFor(slug) { return TOPIC_PREFIX + slug; }
 function dmTopicFor(id) { return TOPIC_PREFIX + "dm-" + String(id || "").toLowerCase(); }
 function cleanRelay(v) { var s = String(v == null ? "" : v).trim(); if (!s) return ""; try { var u = new URL(s); if (u.protocol !== "https:" && u.protocol !== "http:") return ""; return (u.origin + u.pathname).replace(/\/+$/, ""); } catch (e) { return ""; } }
@@ -62,6 +128,42 @@ function verifiedBadge(id) { return isVerifiedId(id) ? '<span class="cm-verified
 function toast(msg, dur) { var t = document.createElement("div"); t.className = "cm-toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(function () { t.remove(); }, dur || 3000); }
 function readFileAsDataURL(file) { return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.onerror = rej; r.readAsDataURL(file); }); }
 function compressImage(dataUrl) { return new Promise(function (res) { var img = new Image(); img.onload = function () { var max = 1280; var w = img.width, h = img.height; if (w > max || h > max) { if (w > h) { h = Math.round(h * max / w); w = max; } else { w = Math.round(w * max / h); h = max; } } var c = document.createElement("canvas"); c.width = w; c.height = h; c.getContext("2d").drawImage(img, 0, 0, w, h); var out = c.toDataURL("image/jpeg", 0.82); if (out.length > MAX_IMAGE_CHARS) out = c.toDataURL("image/jpeg", 0.6); res(out); }; img.onerror = function () { res(dataUrl); }; img.src = dataUrl; }); }
+function compressProfileImage(dataUrl) { return new Promise(function (res) { var img = new Image(); img.onload = function () { var max = 256; var w = img.width, h = img.height; if (w > max || h > max) { if (w > h) { h = Math.round(h * max / w); w = max; } else { w = Math.round(w * max / h); h = max; } } var c = document.createElement("canvas"); c.width = w; c.height = h; c.getContext("2d").drawImage(img, 0, 0, w, h); var out = c.toDataURL("image/jpeg", 0.8); if (out.length > MAX_PROFILE_CHARS) out = c.toDataURL("image/jpeg", 0.55); res(out); }; img.onerror = function () { res(dataUrl); }; img.src = dataUrl; }); }
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text).then(function () { return true; }, function () { return false; });
+  return Promise.resolve(false);
+}
+function openExternal(url) {
+  if (!url) return;
+  try { window.open(url, "_system"); return; } catch (e) { /* ignore */ }
+  try { window.open(url, "_blank"); } catch (e) { /* ignore */ }
+}
+function formatAmount(raw, decimals) {
+  try {
+    var s = window.ethers.utils.formatUnits(raw, decimals);
+    var parts = s.split(".");
+    if (parts[1]) {
+      parts[1] = parts[1].slice(0, 6).replace(/0+$/, "");
+      return parts[1] ? parts[0] + "." + parts[1] : parts[0];
+    }
+    return parts[0];
+  } catch (e) { return "—"; }
+}
+function walletSupported() { return !!(window.ethers && window.ethers.Wallet && window.ethers.providers && window.crypto && window.crypto.getRandomValues); }
+function walletChainByKey(key) { for (var i = 0; i < WALLET_CHAINS.length; i += 1) if (WALLET_CHAINS[i].key === key) return WALLET_CHAINS[i]; return null; }
+function chainTokens(chain) {
+  if (!chain) return [];
+  return chain.tokens.map(function (token) {
+    if (token.custom === "hdo") {
+      var custom = state && state.settings && state.settings.hdoToken;
+      if (custom) return { symbol: token.symbol, address: custom, decimals: token.decimals, custom: token.custom };
+    }
+    return token;
+  });
+}
+function isAddress(v) { try { return !!(window.ethers && window.ethers.utils.isAddress(String(v || ""))); } catch (e) { return false; } }
+function isHexKey(v) { return /^[0-9a-f]{64}$/i.test(String(v || "").replace(/^0x/i, "")); }
+function parseUnits(v, decimals) { return window.ethers.utils.parseUnits(String(v).replace(/,/g, ""), decimals); }
 
 /* ---------- crypto ---------- */
 function cryptoAvailable() { return !!(window.crypto && window.crypto.subtle); }
@@ -70,42 +172,45 @@ function base64ToBytes(s) { var bin = atob(s); var out = new Uint8Array(bin.leng
 function utf8Bytes(s) { return new TextEncoder().encode(s); }
 function utf8Text(b) { return new TextDecoder().decode(b); }
 function randomBytes(n) { var b = new Uint8Array(n); crypto.getRandomValues(b); return b; }
-async function deriveRoomKey(room) {
-  var salt = utf8Bytes("acode-community-room-v1:" + room);
-  var keyMaterial = await crypto.subtle.importKey("raw", utf8Bytes(room), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey({ name: "PBKDF2", salt: salt, iterations: ROOM_KDF_ITERATIONS, hash: "SHA-256" }, keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+function cleanPublicKey(v) { var k = String(v == null ? "" : v).trim(); if (k.length < 60 || k.length > 300) return ""; if (!/^[A-Za-z0-9+/=]+$/.test(k)) return ""; return k; }
+
+async function ensureIdentityKeys() {
+  if (!state) return false;
+  if (state.crypto && state.crypto.publicKey && state.crypto.privateJwk) return true;
+  if (!cryptoAvailable()) return false;
+  try {
+    var pair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]);
+    var raw = await crypto.subtle.exportKey("raw", pair.publicKey);
+    var jwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
+    state.crypto = { publicKey: bytesToBase64(new Uint8Array(raw)), privateJwk: JSON.stringify(jwk), createdAt: Date.now(), publishedAt: 0 };
+    saveState();
+    return true;
+  } catch (e) { return false; }
 }
-async function generateIdentityKey() {
-  var kp = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey", "deriveBits"]);
-  var pub = await crypto.subtle.exportKey("spki", kp.publicKey);
-  var priv = await crypto.subtle.exportKey("pkcs8", kp.privateKey);
-  return { publicKey: bytesToBase64(new Uint8Array(pub)), privateJwk: JSON.stringify(Array.from(new Uint8Array(priv))) };
+
+function deriveRoomKey(room) {
+  var slug = String(room || roomSlug());
+  if (roomKeyPromises[slug]) return roomKeyPromises[slug];
+  if (!cryptoAvailable()) return Promise.reject(new Error("Encryption is not available on this device"));
+  var promise = crypto.subtle.importKey("raw", utf8Bytes("acode-community-passphrase-v1:" + slug), "PBKDF2", false, ["deriveKey"])
+    .then(function (baseKey) {
+      return crypto.subtle.deriveKey({ name: "PBKDF2", salt: utf8Bytes("acode-community-room-salt-v1"), iterations: ROOM_KDF_ITERATIONS, hash: "SHA-256" }, baseKey, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    });
+  roomKeyPromises[slug] = promise;
+  promise.catch(function () { if (roomKeyPromises[slug] === promise) delete roomKeyPromises[slug]; });
+  return promise;
 }
-async function importPrivateKey(jwkArr) {
-  var buf = new Uint8Array(jwkArr);
-  return crypto.subtle.importKey("pkcs8", buf, { name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey", "deriveBits"]);
-}
-async function importPublicKey(b64) {
-  var buf = base64ToBytes(b64);
-  return crypto.subtle.importKey("spki", buf, { name: "ECDH", namedCurve: "P-256" }, true, []);
-}
-async function deriveDmKey(peerPubB64, myPrivJwk) {
-  var peerPub = await importPublicKey(peerPubB64);
-  var myPriv = await importPrivateKey(JSON.parse(myPrivJwk));
-  var bits = await crypto.subtle.deriveBits({ name: "ECDH", public: peerPub }, myPriv, 256);
-  var km = await crypto.subtle.importKey("raw", bits, "HKDF", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt: utf8Bytes("acode-community-dm-v1"), info: utf8Bytes("key") }, km, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-}
-async function encryptAES(key, plaintext) {
-  var iv = randomBytes(12);
-  var ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv, additionalData: utf8Bytes(ENC_AAD_ROOM) }, key, utf8Bytes(plaintext));
-  return { iv: bytesToBase64(iv), data: bytesToBase64(new Uint8Array(ct)) };
-}
-async function decryptAES(key, ivB64, dataB64, aad) {
-  var iv = base64ToBytes(ivB64);
-  var ct = base64ToBytes(dataB64);
-  var pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv, additionalData: utf8Bytes(aad) }, key, ct);
-  return utf8Text(new Uint8Array(pt));
+
+function deriveDmKey(peerPublicKey, myPrivateJwk) {
+  return Promise.resolve().then(function () {
+    if (!cryptoAvailable()) throw new Error("Encryption is not available on this device");
+    return crypto.subtle.importKey("raw", base64ToBytes(peerPublicKey), { name: "ECDH", namedCurve: "P-256" }, false, []);
+  }).then(function (peerKey) {
+    var jwk = JSON.parse(myPrivateJwk);
+    return crypto.subtle.importKey("jwk", jwk, { name: "ECDH", namedCurve: "P-256" }, false, ["deriveKey"]).then(function (privateKey) {
+      return crypto.subtle.deriveKey({ name: "ECDH", public: peerKey }, privateKey, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    });
+  });
 }
 
 /* ---------- state ---------- */
@@ -120,6 +225,78 @@ function makeUserId() {
   return "CM-" + parts.join("-");
 }
 function defaultName(id) { return "User " + String(id || "").slice(-4); }
+function cleanWallet(input) {
+  if (!input || typeof input !== "object") return null;
+  var key = String(input.privateKey || "").replace(/^0x/i, "").toLowerCase();
+  if (!isHexKey(key) || !walletSupported()) return null;
+  try {
+    var w = new window.ethers.Wallet("0x" + key);
+    return { address: w.address, privateKey: key, createdAt: Number(input.createdAt) || Date.now() };
+  } catch (e) { return null; }
+}
+function makeWallet() {
+  if (!walletSupported()) return null;
+  try {
+    var w = window.ethers.Wallet.createRandom();
+    return { address: w.address, privateKey: w.privateKey.replace(/^0x/i, "").toLowerCase(), createdAt: Date.now() };
+  } catch (e) { return null; }
+}
+function sanitizeImage(value) {
+  if (typeof value !== "string") return "";
+  if (value.length > MAX_IMAGE_CHARS) return "";
+  if (!/^data:image\/(png|jpe?g|webp|gif);base64,[a-z0-9+/=\s]+$/i.test(value)) return "";
+  return value;
+}
+function sanitizeProfileImage(value) {
+  if (typeof value !== "string") return "";
+  if (!value) return "";
+  if (value.length > MAX_PROFILE_CHARS) return "";
+  if (/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(value)) return value;
+  if (/^https?:\/\//i.test(value)) return value;
+  return "";
+}
+function sanitizeToken(value) {
+  if (!value || typeof value !== "object") return null;
+  var chain = walletChainByKey(String(value.chain || ""));
+  if (!chain) return null;
+  var symbol = String(value.symbol == null ? "" : value.symbol).slice(0, 12);
+  if (!/^[A-Za-z0-9$._-]{1,12}$/.test(symbol)) symbol = chain.native.symbol;
+  var amount = String(value.amount == null ? "" : value.amount).replace(/,/g, "").slice(0, 32);
+  if (!/^\d+(\.\d+)?$/.test(amount)) return null;
+  var to = String(value.to || "");
+  if (!isAddress(to)) return null;
+  var tx = /^0x[0-9a-f]{64}$/i.test(String(value.tx || "")) ? String(value.tx).toLowerCase() : "";
+  if (!tx) return null;
+  return { chain: chain.key, symbol: symbol, amount: amount, to: to, tx: tx };
+}
+function sanitizeAirdrop(value) {
+  if (!value || typeof value !== "object") return null;
+  var chain = walletChainByKey(String(value.chain || ""));
+  if (!chain) return null;
+  var claimKey = String(value.claimKey == null ? "" : value.claimKey).replace(/^0x/i, "").toLowerCase();
+  if (!isHexKey(claimKey)) return null;
+  var amount = String(value.amount == null ? "" : value.amount).replace(/,/g, "").slice(0, 32);
+  if (!/^\d+(\.\d+)?$/.test(amount) || /^[0.]+$/.test(amount)) return null;
+  var rawToken = String(value.tokenAddress == null ? "" : value.tokenAddress).trim();
+  if (rawToken && !isAddress(rawToken)) return null;
+  var decimals = Number(value.decimals);
+  if (!(decimals >= 0 && decimals <= 36)) decimals = chain.native.decimals;
+  var symbol = String(value.symbol == null ? "" : value.symbol).slice(0, 12);
+  if (!/^[A-Za-z0-9$._-]{1,12}$/.test(symbol)) symbol = rawToken ? "TOKEN" : chain.native.symbol;
+  var fundingTx = /^0x[0-9a-f]{64}$/i.test(String(value.fundingTx || "")) ? String(value.fundingTx).toLowerCase() : "";
+  var claimedTx = /^0x[0-9a-f]{64}$/i.test(String(value.claimedTx || "")) ? String(value.claimedTx).toLowerCase() : "";
+  return {
+    chain: chain.key,
+    claimKey: claimKey,
+    amount: amount,
+    decimals: decimals,
+    symbol: symbol,
+    tokenAddress: rawToken ? rawToken.toLowerCase() : "",
+    fundingTx: fundingTx,
+    claimed: !!value.claimed || !!claimedTx,
+    claimedTx: claimedTx
+  };
+}
 function normalizeState(data) {
   var input = data && typeof data === "object" ? data : {};
   var userId = normalizeId(input.user && input.user.id) || makeUserId();
@@ -128,25 +305,88 @@ function normalizeState(data) {
   var room = slugFor(settingsInput.room || DEFAULT_ROOM);
   var relay = cleanRelay(settingsInput.relay);
   if (!relay || LEGACY_RELAYS.indexOf(relay) !== -1) relay = DEFAULT_RELAY;
+
   var contacts = {};
   var ci = input.contacts && typeof input.contacts === "object" ? input.contacts : {};
   Object.keys(ci).forEach(function (k) {
-    var cid = normalizeId(k); if (!cid || cid === userId) return;
+    var cid = normalizeId(k);
+    if (!cid || cid === userId) return;
     var c = ci[k] || {};
-    contacts[cid] = { id: cid, name: cleanName(c.name) || defaultName(cid), emoji: safeEmoji(c.emoji) || "🙂", publicKey: (typeof c.publicKey === "string" ? c.publicKey : ""), lastSeen: Number(c.lastSeen) || 0 };
+    var publicKey = cleanPublicKey(c.publicKey);
+    if (publicKey.length > 100) publicKey = ""; /* old SPKI key from web v1.0 */
+    contacts[cid] = {
+      id: cid,
+      name: cleanName(c.name) || defaultName(cid),
+      emoji: safeEmoji(c.emoji) || "🙂",
+      publicKey: publicKey,
+      wallet: isAddress(c.wallet) ? c.wallet : "",
+      lastSeen: Number(c.lastSeen) || 0
+    };
   });
+
   var threads = {};
   var ti = input.threads && typeof input.threads === "object" ? input.threads : {};
   Object.keys(ti).forEach(function (k) {
-    var t = ti[k] || {}; var msgs = Array.isArray(t.messages) ? t.messages.slice(-MAX_MESSAGES) : [];
+    var t = ti[k] || {};
+    var msgs = Array.isArray(t.messages) ? t.messages.slice(-MAX_MESSAGES).map(function (m) {
+      if (!m || typeof m !== "object") return null;
+      var out = {
+        id: String(m.id || "").slice(0, 80),
+        from: normalizeId(m.from) || String(m.from || ""),
+        name: cleanName(m.name),
+        text: String(m.text || "").slice(0, MAX_TEXT),
+        image: sanitizeImage(m.image),
+        ts: Number(m.ts) || 0,
+        mine: !!m.mine,
+        status: String(m.status || ""),
+        token: sanitizeToken(m.token),
+        airdrop: sanitizeAirdrop(m.airdrop)
+      };
+      return out.id ? out : null;
+    }).filter(Boolean) : [];
     threads[k] = { peer: t.peer || "community", room: t.room || "", messages: msgs, unread: Math.max(0, Number(t.unread) || 0), lastTs: Number(t.lastTs) || 0 };
   });
+
   var cursors = input.cursors && typeof input.cursors === "object" ? input.cursors : {};
   var dmCursor = input.dmCursor && typeof input.dmCursor === "object" ? input.dmCursor : null;
   var verifiedIds = Array.isArray(input.verifiedIds) ? input.verifiedIds.map(normalizeId).filter(Boolean) : [];
+  var verifiedCursor = input.verifiedCursor && typeof input.verifiedCursor === "object" ? input.verifiedCursor : null;
+
   var cryptoInput = input.crypto && typeof input.crypto === "object" ? input.crypto : {};
-  var cryptoState = { publicKey: (typeof cryptoInput.publicKey === "string" ? cryptoInput.publicKey : ""), privateJwk: (typeof cryptoInput.privateJwk === "string" ? cryptoInput.privateJwk : ""), publishedAt: Number(cryptoInput.publishedAt) || 0 };
-  return { schema: 1, user: user, settings: { room: room, relay: relay, notify: settingsInput.notify !== false }, contacts: contacts, threads: threads, cursors: cursors, dmCursor: dmCursor, verifiedIds: verifiedIds, crypto: cryptoState, welcome: input.welcome !== false };
+  var publicKey = cleanPublicKey(cryptoInput.publicKey);
+  var privateJwk = typeof cryptoInput.privateJwk === "string" ? cryptoInput.privateJwk : "";
+  /* web v1.0 used SPKI keys; regenerate so we match the plugin's raw keys. */
+  if (publicKey.length > 100 || privateJwk.charAt(0) === "[") { publicKey = ""; privateJwk = ""; }
+  var cryptoState = {
+    publicKey: publicKey,
+    privateJwk: privateJwk,
+    createdAt: Number(cryptoInput.createdAt) || 0,
+    publishedAt: Number(cryptoInput.publishedAt) || 0
+  };
+
+  var wallet = cleanWallet(input.wallet);
+  var profileImage = sanitizeProfileImage(input.profileImage);
+
+  return {
+    schema: 2,
+    user: user,
+    settings: {
+      room: room,
+      relay: relay,
+      notify: settingsInput.notify !== false,
+      hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : ""
+    },
+    contacts: contacts,
+    threads: threads,
+    cursors: cursors,
+    dmCursor: dmCursor,
+    verifiedIds: verifiedIds,
+    verifiedCursor: verifiedCursor,
+    crypto: cryptoState,
+    wallet: wallet,
+    profileImage: profileImage,
+    welcome: input.welcome !== false
+  };
 }
 function loadState() {
   var raw = null;
@@ -155,49 +395,101 @@ function loadState() {
   if (raw) { try { data = JSON.parse(raw); } catch (e) { data = null; } }
   return normalizeState(data);
 }
-function saveState() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {} }
+function saveState() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* storage full */ } }
 
 /* ---------- identity keys ---------- */
-async function ensureIdentityKeys() {
-  if (!state.crypto) state.crypto = { publicKey: "", privateJwk: "", publishedAt: 0 };
-  if (state.crypto.publicKey && state.crypto.privateJwk) return true;
-  try {
-    var kp = await generateIdentityKey();
-    state.crypto.publicKey = kp.publicKey;
-    state.crypto.privateJwk = kp.privateJwk;
-    saveState();
-    return true;
-  } catch (e) { return false; }
-}
 async function publishPublicKey(force) {
   if (!running || !state) return;
   var now = Date.now();
   if (!force && state.crypto.publishedAt && now - state.crypto.publishedAt < 6 * 60 * 60 * 1000) return;
   await ensureIdentityKeys();
+  if (!state.crypto.publicKey) return;
   var env = { app: APP_TAG, v: ENVELOPE_VERSION, id: uid(), from: state.user.id, name: state.user.name, emoji: state.user.emoji, type: "key", ts: now, pk: state.crypto.publicKey };
   await publish(env, dmTopicFor(state.user.id));
-  state.crypto.publishedAt = now; saveState();
+  state.crypto.publishedAt = now;
+  saveState();
 }
 async function publishPresence(force) {
   if (!running || !state) return;
   var now = Date.now();
   if (!force && lastPresenceAt && now - lastPresenceAt < PRESENCE_MS) return;
   if (presenceInFlight) return;
-  presenceInFlight = true; lastPresenceAt = now;
+  presenceInFlight = true;
+  lastPresenceAt = now;
   await ensureIdentityKeys();
   var env = { app: APP_TAG, v: ENVELOPE_VERSION, id: uid(), from: state.user.id, name: state.user.name, emoji: state.user.emoji, type: "presence", ts: now };
-  if (state.crypto && state.crypto.publicKey) env.pk = state.crypto.publicKey;
-  try { await publish(env, topicFor(roomSlug())); } catch (e) {}
+  if (state.crypto.publicKey) env.pk = state.crypto.publicKey;
+  try { await publish(env, topicFor(roomSlug())); } catch (e) { /* ignore */ }
   presenceInFlight = false;
+}
+
+function fetchPeerPublicKey(peer) {
+  var peerId = normalizeId(peer);
+  if (!peerId) return Promise.resolve("");
+  var url = relayBase() + "/" + encodeURIComponent(dmTopicFor(peerId)) + "/json?poll=1&limit=300&since=all";
+  return fetchWithTimeout(url, { cache: "no-store" }, 12000).then(function (response) {
+    if (!response.ok) throw new Error("Relay returned HTTP " + response.status);
+    return response.text();
+  }).then(function (text) {
+    var found = "";
+    var lines = String(text || "").split("\n");
+    for (var i = 0; i < lines.length; i += 1) {
+      var line = lines[i].trim();
+      if (!line) continue;
+      var item;
+      try { item = JSON.parse(line); } catch (e) { continue; }
+      if (!item || item.event !== "message" || typeof item.message !== "string") continue;
+      var envelope;
+      try { envelope = JSON.parse(item.message); } catch (e) { continue; }
+      if (!envelope || envelope.app !== APP_TAG || Number(envelope.v) !== ENVELOPE_VERSION) continue;
+      if (normalizeId(envelope.from) !== peerId) continue;
+      var publicKey = cleanPublicKey(envelope.pk);
+      if (publicKey && publicKey.length <= 100) found = publicKey;
+    }
+    return found;
+  });
+}
+function ensurePeerPublicKey(peer) {
+  var peerId = normalizeId(peer);
+  if (!peerId) return Promise.resolve("");
+  var contact = state.contacts[peerId];
+  if (contact && contact.publicKey) return Promise.resolve(contact.publicKey);
+  if (peerKeyFetches[peerId]) return peerKeyFetches[peerId];
+  var promise = fetchPeerPublicKey(peerId).then(function (publicKey) {
+    delete peerKeyFetches[peerId];
+    if (!publicKey) return "";
+    rememberPublicKey(peerId, publicKey);
+    return publicKey;
+  }, function () {
+    delete peerKeyFetches[peerId];
+    return "";
+  });
+  peerKeyFetches[peerId] = promise;
+  return promise;
+}
+function rememberPublicKey(id, value) {
+  var peerId = normalizeId(id);
+  var publicKey = cleanPublicKey(value);
+  if (!peerId || !publicKey || !state) return;
+  var contact = state.contacts[peerId];
+  if (!contact) return;
+  if (contact.publicKey) return;
+  contact.publicKey = publicKey;
+  delete dmKeyPromises[peerId];
+  saveState();
 }
 
 /* ---------- relay transport ---------- */
 function fetchWithTimeout(url, options, timeoutMs) {
   var controller = null, timer = null;
-  if (typeof AbortController !== "undefined") { controller = new AbortController(); timer = setTimeout(function () { try { controller.abort(); } catch (e) {} }, timeoutMs || 15000); }
-  var opts = options || {}; if (controller) opts.signal = controller.signal;
+  if (typeof AbortController !== "undefined") {
+    controller = new AbortController();
+    timer = setTimeout(function () { try { controller.abort(); } catch (e) { /* ignore */ } }, timeoutMs || 15000);
+  }
+  var opts = options || {};
+  if (controller) opts.signal = controller.signal;
   var req = fetch(url, opts);
-  if (timer) { req.then(function () { clearTimeout(timer); }, function () { clearTimeout(timer); }); }
+  if (timer) req.then(function () { clearTimeout(timer); }, function () { clearTimeout(timer); });
   return req;
 }
 function parseEnvelopeText(text) { if (typeof text !== "string" || !text) return null; try { var v = JSON.parse(text); return v && typeof v === "object" ? v : null; } catch (e) { return null; } }
@@ -206,7 +498,7 @@ function publish(envelope, topic) {
   var url = base + "/" + encodeURIComponent(topic);
   return fetchWithTimeout(url, { method: "POST", body: JSON.stringify(envelope), cache: "no-store" }, 25000).then(function (r) {
     if (r.ok) return r;
-    return r.text().then(function (b) { throw new Error("Relay HTTP " + r.status); });
+    return r.text().then(function (body) { throw new Error("Relay HTTP " + r.status + (body ? " — " + body.slice(0, 80) : "")); });
   });
 }
 function pollTopic(url, guard, onCursor) {
@@ -218,14 +510,17 @@ function pollTopic(url, guard, onCursor) {
     var nextCursor = null;
     var lines = String(text || "").split("\n");
     for (var i = 0; i < lines.length; i++) {
-      var line = lines[i].trim(); if (!line) continue;
-      var item; try { item = JSON.parse(line); } catch (e) { continue; }
+      var line = lines[i].trim();
+      if (!line) continue;
+      var item;
+      try { item = JSON.parse(line); } catch (e) { continue; }
       if (!item || item.event !== "message") continue;
       if (item.id) nextCursor = { id: String(item.id).slice(0, 80), ts: Number(item.time) || Math.floor(Date.now() / 1000) };
+      if (guard && !guard()) continue;
       var env = parseEnvelopeText(item.message);
       if (env) handleEnvelope(env);
     }
-    if (nextCursor) onCursor(nextCursor);
+    if (nextCursor && (!guard || guard())) onCursor(nextCursor);
   });
 }
 function pollNow() {
@@ -238,11 +533,21 @@ function pollNow() {
   var userId = state.user.id;
   var roomUrl = base + "/" + encodeURIComponent(topicFor(slug)) + "/json?poll=1&limit=200&since=" + encodeURIComponent(sinceValue(roomCursor));
   var dmUrl = base + "/" + encodeURIComponent(dmTopicFor(userId)) + "/json?poll=1&limit=200&since=" + encodeURIComponent(sinceValue(dmCursor));
-  var roomPoll = pollTopic(roomUrl, function () { return slug === roomSlug() && base === relayBase(); }, function (c) { var p = state.cursors[slug]; state.cursors[slug] = c; if (!p || p.id !== c.id) saveState(); }).catch(function () {});
-  var dmPoll = pollTopic(dmUrl, function () { return userId === state.user.id && base === relayBase(); }, function (c) { state.dmCursor = c; saveState(); }).catch(function () {});
-  Promise.all([roomPoll, dmPoll]).then(function () {
+  var roomPoll = pollTopic(roomUrl, function () { return slug === roomSlug() && base === relayBase(); }, function (c) {
+    state.cursors[slug] = c;
+    saveState();
+  }).catch(function () {});
+  var dmPoll = pollTopic(dmUrl, function () { return userId === state.user.id && base === relayBase(); }, function (c) {
+    state.dmCursor = c;
+    saveState();
+  }).catch(function () {});
+  var verifiedPoll = pollVerified();
+  Promise.all([roomPoll, dmPoll, verifiedPoll]).then(function () {
     if (running) { ui.status = "online"; renderStatus(); }
-  }).catch(function () {}).then(function () { pollInFlight = false; schedulePoll(); });
+  }).catch(function () {}).then(function () {
+    pollInFlight = false;
+    schedulePoll();
+  });
 }
 function schedulePoll(delay) {
   if (!running) return;
@@ -250,13 +555,53 @@ function schedulePoll(delay) {
   var next = delay != null ? delay : (document.hidden ? POLL_SLOW_MS : POLL_FAST_MS);
   pollTimer = setTimeout(pollNow, Math.max(0, next));
 }
+function pollVerified() {
+  if (!running || !state) return Promise.resolve();
+  var base = relayBase();
+  var cursor = state.verifiedCursor || null;
+  var url = base + "/" + encodeURIComponent(VERIFIED_TOPIC) + "/json?poll=1&limit=200&since=" + encodeURIComponent(sinceValue(cursor));
+  return fetchWithTimeout(url, { cache: "no-store" }, 15000).then(function (r) {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.text();
+  }).then(function (text) {
+    if (!running || !state) return;
+    var nextCursor = null;
+    var changed = false;
+    var lines = String(text || "").split("\n");
+    for (var i = 0; i < lines.length; i += 1) {
+      var line = lines[i].trim();
+      if (!line) continue;
+      var item;
+      try { item = JSON.parse(line); } catch (e) { continue; }
+      if (!item || item.event !== "message") continue;
+      if (item.id) nextCursor = { id: String(item.id).slice(0, 80), ts: Number(item.time) || Math.floor(Date.now() / 1000) };
+      var envelope = parseEnvelopeText(item.message);
+      if (!envelope || envelope.app !== APP_TAG || Number(envelope.v) !== ENVELOPE_VERSION) continue;
+      if (normalizeId(envelope.from) !== DEV_ID) continue;
+      var target = normalizeId(envelope.target);
+      if (!target) continue;
+      if (!state.verifiedIds) state.verifiedIds = [];
+      if (envelope.type === "verify-grant") {
+        if (state.verifiedIds.indexOf(target) === -1) { state.verifiedIds.push(target); changed = true; }
+      } else if (envelope.type === "verify-revoke") {
+        var index = state.verifiedIds.indexOf(target);
+        if (index !== -1) { state.verifiedIds.splice(index, 1); changed = true; }
+      }
+    }
+    if (nextCursor) { state.verifiedCursor = nextCursor; saveState(); }
+    else if (changed) saveState();
+    if (changed) render();
+  }).catch(function () {});
+}
 
 /* ---------- incoming ---------- */
 function handleEnvelope(env) {
   if (!state || !env || typeof env !== "object") return;
   if (env.app !== APP_TAG || Number(env.v) !== ENVELOPE_VERSION) return;
-  var from = normalizeId(env.from); if (!from || from === state.user.id) return;
-  var messageId = typeof env.id === "string" ? env.id.slice(0, 80) : ""; if (!messageId) return;
+  var from = normalizeId(env.from);
+  if (!from || from === state.user.id) return;
+  var messageId = typeof env.id === "string" ? env.id.slice(0, 80) : "";
+  if (!messageId) return;
   var isPresence = env.type === "presence";
   var isKey = env.type === "key";
   var name = cleanName(env.name);
@@ -265,21 +610,21 @@ function handleEnvelope(env) {
   var to = String(env.to || "all");
   if (!isPresence && !isKey && to !== "all" && to !== state.user.id) return;
   if (isKey && !state.contacts[from]) return;
-  // upsert contact
-  if (!state.contacts[from]) state.contacts[from] = { id: from, name: name || defaultName(from), emoji: emoji, publicKey: "", lastSeen: 0 };
+  if (!state.contacts[from]) state.contacts[from] = { id: from, name: name || defaultName(from), emoji: emoji, publicKey: "", wallet: "", lastSeen: 0 };
   var contact = state.contacts[from];
-  if (name) contact.name = name; if (emoji) contact.emoji = emoji;
-  if (env.pk) contact.publicKey = env.pk;
+  if (name) contact.name = name;
+  if (emoji) contact.emoji = emoji;
+  if (env.pk) rememberPublicKey(from, env.pk);
   if (isPresence) { contact.lastSeen = ts; saveState(); render(); return; }
-  if (isKey) { if (env.pk) contact.publicKey = env.pk; saveState(); return; }
+  if (isKey) { if (env.pk) rememberPublicKey(from, env.pk); saveState(); return; }
+  if (isAiRoom() && to === "all") return;
   if (env.enc === ENC_VERSION) {
-    // decrypt
     decryptWireEnvelope(env).then(function (payload) {
-      applyIncoming(env, from, contact, messageId, payload.text, payload.image, ts);
-    }).catch(function () {});
+      applyIncoming(env, from, contact, messageId, payload.text, payload.image, ts, payload.token, payload.airdrop);
+    }).catch(function () { /* cannot decrypt */ });
     return;
   }
-  applyIncoming(env, from, contact, messageId, env.text, env.image, ts);
+  applyIncoming(env, from, contact, messageId, env.text, env.image, ts, env.token, env.airdrop);
 }
 async function decryptWireEnvelope(env) {
   if (!cryptoAvailable()) throw new Error("no crypto");
@@ -288,53 +633,107 @@ async function decryptWireEnvelope(env) {
   if (env.to === "all") {
     key = await deriveRoomKey(roomSlug());
   } else {
-    if (!state.contacts[env.from] || !state.contacts[env.from].publicKey) throw new Error("no key");
-    key = await deriveDmKey(state.contacts[env.from].publicKey, state.crypto.privateJwk);
+    var pk = state.contacts[env.from] && state.contacts[env.from].publicKey;
+    if (!pk) throw new Error("no key");
+    key = await deriveDmKey(pk, state.crypto.privateJwk);
   }
   var aad = env.to === "all" ? ENC_AAD_ROOM : ENC_AAD_DM;
   var pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64ToBytes(env.iv), additionalData: utf8Bytes(aad) }, key, base64ToBytes(env.data));
   var payload = JSON.parse(utf8Text(new Uint8Array(pt)));
-  return { text: String(payload.text || ""), image: payload.image || "" };
+  return {
+    text: String(payload.text || ""),
+    image: sanitizeImage(payload.image || ""),
+    token: sanitizeToken(payload.token),
+    airdrop: sanitizeAirdrop(payload.airdrop)
+  };
 }
-async function buildWireEnvelope(peer, text, image) {
+async function buildWireEnvelope(peer, text, image, extra) {
   var room = roomSlug();
   var env = { app: APP_TAG, v: ENVELOPE_VERSION, id: uid(), from: state.user.id, name: state.user.name, emoji: state.user.emoji, to: peer === "community" ? "all" : peer, type: "secure", ts: Date.now() };
-  if (!cryptoAvailable()) throw new Error("Encryption unavailable");
-  await ensureIdentityKeys();
+  extra = extra || {};
+  var plain = { text: text || "", image: image || "" };
+  if (extra.token) plain.token = extra.token;
+  if (extra.airdrop) plain.airdrop = extra.airdrop;
+
+  if (!cryptoAvailable()) {
+    env.text = plain.text;
+    env.image = plain.image;
+    if (plain.token) env.token = plain.token;
+    if (plain.airdrop) env.airdrop = plain.airdrop;
+    env._plain = true;
+    return env;
+  }
+  var ok = await ensureIdentityKeys();
+  if (!ok) {
+    env.text = plain.text;
+    env.image = plain.image;
+    if (plain.token) env.token = plain.token;
+    if (plain.airdrop) env.airdrop = plain.airdrop;
+    env._plain = true;
+    return env;
+  }
   env.pk = state.crypto.publicKey;
   var key;
-  if (peer === "community") key = await deriveRoomKey(room);
-  else {
+  if (peer === "community") {
+    key = await deriveRoomKey(room);
+  } else {
     var pk = state.contacts[peer] && state.contacts[peer].publicKey;
-    if (!pk) throw new Error("Waiting for friend's key");
+    if (!pk) pk = await ensurePeerPublicKey(peer);
+    if (!pk) {
+      /* Send a readable fallback instead of losing the message. The plugin
+         accepts plaintext envelopes, and the friend gets the text now. */
+      env.text = plain.text;
+      env.image = plain.image;
+      if (plain.token) env.token = plain.token;
+      if (plain.airdrop) env.airdrop = plain.airdrop;
+      env._plain = true;
+      return env;
+    }
     key = await deriveDmKey(pk, state.crypto.privateJwk);
   }
   var iv = randomBytes(12);
   var aad = peer === "community" ? ENC_AAD_ROOM : ENC_AAD_DM;
-  var plain = utf8Bytes(JSON.stringify({ text: text || "", image: image || "" }));
-  var ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv, additionalData: utf8Bytes(aad) }, key, plain);
-  env.enc = ENC_VERSION; env.iv = bytesToBase64(iv); env.data = bytesToBase64(new Uint8Array(ct));
+  var ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv, additionalData: utf8Bytes(aad) }, key, utf8Bytes(JSON.stringify(plain)));
+  env.enc = ENC_VERSION;
+  env.iv = bytesToBase64(iv);
+  env.data = bytesToBase64(new Uint8Array(ct));
   return env;
 }
-function applyIncoming(env, from, contact, messageId, text, image) {
+function applyIncoming(env, from, contact, messageId, text, image, ts, token, airdrop) {
   var peer = env.to === "all" ? "community" : from;
   var threadKey = peer === "community" ? ("room:" + roomSlug()) : ("dm:" + from);
   if (!state.threads[threadKey]) state.threads[threadKey] = { peer: peer, room: roomSlug(), messages: [], unread: 0, lastTs: 0 };
   var thread = state.threads[threadKey];
   if (thread.messages.some(function (m) { return m.id === messageId; })) return;
-  thread.messages.push({ id: messageId, from: from, name: contact.name, text: text || "", image: image || "", ts: Number(env.ts) || Date.now(), mine: false });
+  var safeText = String(text == null ? "" : text).slice(0, MAX_TEXT);
+  var safeImage = sanitizeImage(image);
+  var safeToken = sanitizeToken(token);
+  var safeAirdrop = sanitizeAirdrop(airdrop);
+  if (!safeText && !safeImage && !safeToken && !safeAirdrop) return;
+  thread.messages.push({
+    id: messageId,
+    from: from,
+    name: contact.name,
+    text: safeText,
+    image: safeImage,
+    ts: Number(env.ts) || ts,
+    mine: false,
+    status: "sent",
+    token: safeToken,
+    airdrop: safeAirdrop
+  });
   if (thread.messages.length > MAX_MESSAGES) thread.messages = thread.messages.slice(-MAX_MESSAGES);
-  thread.lastTs = Math.max(thread.lastTs || 0, Number(env.ts) || Date.now());
+  thread.lastTs = Math.max(thread.lastTs || 0, Number(env.ts) || ts);
   if (ui.peer !== peer || ui.mode !== "thread") thread.unread = (thread.unread || 0) + 1;
   saveState();
   render();
 }
 
 /* ---------- actions ---------- */
-async function sendMessage(text, image) {
-  if (!state) return;
+async function sendMessage(text, image, extra) {
+  if (!state || !ui.peer) { toast("Open a room or direct chat first"); return; }
+  extra = extra || {};
   var peer = ui.peer;
-  if (!peer) return;
   var isCommunity = peer === "community";
   var slug = roomSlug();
   var threadKey = isCommunity ? ("room:" + slug) : ("dm:" + peer);
@@ -343,101 +742,848 @@ async function sendMessage(text, image) {
   var msgId = uid();
   var now = Date.now();
   var img = image || "";
-  var optimistic = { id: msgId, from: state.user.id, name: state.user.name, text: img && !text ? "📷 Photo" : (text || ""), image: img, ts: now, mine: true, status: "sending" };
+  var token = sanitizeToken(extra.token);
+  var airdrop = sanitizeAirdrop(extra.airdrop);
+  if (!text && !img && !token && !airdrop) return;
+  var optimistic = {
+    id: msgId,
+    from: state.user.id,
+    name: state.user.name,
+    text: String(text || ""),
+    image: img,
+    ts: now,
+    mine: true,
+    status: "sending",
+    token: token,
+    airdrop: airdrop
+  };
   thread.messages.push(optimistic);
   thread.lastTs = now;
-  saveState(); render();
+  saveState();
+  render();
   try {
-    var env = await buildWireEnvelope(peer, text || "", img);
+    var env = await buildWireEnvelope(peer, text || "", img, { token: token, airdrop: airdrop });
     env.id = msgId;
     await publish(env, isCommunity ? topicFor(slug) : dmTopicFor(peer));
-    optimistic.status = "sent"; saveState(); render();
-    if (isCommunity && slug === "ai" && text) {
-      fetch(AI_ENDPOINT + encodeURIComponent(text)).then(function (r) { return r.text(); }).then(function (reply) {
-        var aiMsg = { id: uid(), from: AI_ID, name: AI_NAME, text: reply, image: "", ts: Date.now(), mine: false };
-        thread.messages.push(aiMsg);
-        if (thread.messages.length > MAX_MESSAGES) thread.messages = thread.messages.slice(-MAX_MESSAGES);
-        thread.lastTs = Date.now();
-        saveState(); render();
-      }).catch(function () { toast("AI reply failed"); });
-    }
+    optimistic.status = "sent";
+    optimistic.unencrypted = !!env._plain;
+    saveState();
+    render();
+    if (isCommunity && slug === "ai" && text) askAI(thread, text);
   } catch (e) {
-    optimistic.status = "failed"; saveState(); render();
-    toast(e && e.message ? e.message : "Send failed");
+    optimistic.status = "failed";
+    optimistic.error = e && e.message ? e.message : String(e);
+    saveState();
+    render();
+    toast("Message not sent: " + optimistic.error, 6000);
   }
 }
+function askAI(thread, text) {
+  fetch(AI_ENDPOINT + encodeURIComponent(text)).then(function (r) {
+    if (!r.ok) throw new Error("AI HTTP " + r.status);
+    return r.json();
+  }).then(function (data) {
+    var reply = data && (data.response || data.message || data.reply);
+    if (!reply) throw new Error("No AI reply");
+    thread.messages.push({ id: uid(), from: AI_ID, name: AI_NAME, text: String(reply), image: "", ts: Date.now(), mine: false, status: "sent", token: null, airdrop: null });
+    if (thread.messages.length > MAX_MESSAGES) thread.messages = thread.messages.slice(-MAX_MESSAGES);
+    thread.lastTs = Date.now();
+    saveState();
+    render();
+  }).catch(function (e) {
+    toast("AI reply failed: " + (e && e.message ? e.message : String(e)), 6000);
+  });
+}
 function retryMessage(id) {
-  // simple: resend by id lookup
-  toast("Retry not implemented in web build");
+  if (!state || ui.mode !== "thread") return;
+  var peer = ui.peer;
+  var threadKey = peer === "community" ? ("room:" + roomSlug()) : ("dm:" + peer);
+  var thread = state.threads[threadKey];
+  if (!thread) return;
+  var message = null;
+  for (var i = 0; i < thread.messages.length; i += 1) if (thread.messages[i].id === id) message = thread.messages[i];
+  if (!message) return;
+  message.status = "sending";
+  message.error = "";
+  saveState();
+  render();
+  buildWireEnvelope(peer, message.text, message.image, { token: message.token, airdrop: message.airdrop }).then(function (env) {
+    env.id = message.id;
+    return publish(env, peer === "community" ? topicFor(roomSlug()) : dmTopicFor(peer));
+  }).then(function () {
+    message.status = "sent";
+    message.unencrypted = false;
+    saveState();
+    render();
+  }).catch(function (e) {
+    message.status = "failed";
+    message.error = e && e.message ? e.message : String(e);
+    saveState();
+    render();
+    toast("Retry failed: " + message.error, 6000);
+  });
 }
 function openThread(peer) {
-  ui.mode = "thread"; ui.peer = peer;
+  if (!state) return;
+  ui.mode = "thread";
+  ui.peer = peer;
   var threadKey = peer === "community" ? ("room:" + roomSlug()) : ("dm:" + peer);
   if (state.threads[threadKey]) state.threads[threadKey].unread = 0;
-  saveState(); render();
+  if (peer !== "community") ensurePeerPublicKey(peer).then(function () { if (ui.peer === peer) render(); });
+  saveState();
+  render();
+  pollNow();
 }
 function closeThread() { ui.mode = "tabs"; ui.peer = null; render(); }
 function addContact(id) {
-  var cid = normalizeId(id); if (!cid) { toast("Invalid ID"); return; }
-  if (cid === state.user.id) { toast("That's you"); return; }
-  if (!state.contacts[cid]) state.contacts[cid] = { id: cid, name: defaultName(cid), emoji: "🙂", publicKey: "", lastSeen: 0 };
+  var cid = normalizeId(id);
+  if (!cid) { toast("Invalid ID. Use CM-XXXX-XXXX."); return; }
+  if (cid === state.user.id) { toast("That's your own ID"); return; }
+  if (!state.contacts[cid]) state.contacts[cid] = { id: cid, name: defaultName(cid), emoji: "🙂", publicKey: "", wallet: "", lastSeen: 0 };
   if (!state.threads["dm:" + cid]) state.threads["dm:" + cid] = { peer: cid, room: "", messages: [], unread: 0, lastTs: 0 };
-  saveState(); render(); toast("Contact added");
+  saveState();
+  render();
+  toast("Contact added");
+  ensurePeerPublicKey(cid).then(function () { render(); });
 }
-function setRoom(room) { state.settings.room = slugFor(room); state.cursors[roomSlug()] = null; saveState(); render(); pollNow(); }
-function saveName() { var n = cleanName(document.getElementById("nameInput").value); if (!n) { toast("Enter a name"); return; } state.user.name = n; saveState(); publishPresence(true); render(); toast("Name saved"); }
+function setRoom(room) {
+  state.settings.room = slugFor(room);
+  saveState();
+  pollNow();
+  openThread("community");
+}
+function saveName() {
+  var input = document.getElementById("nameInput");
+  var n = cleanName(input && input.value);
+  if (!n) { toast("Enter a name"); return; }
+  state.user.name = n;
+  saveState();
+  publishPresence(true);
+  render();
+  toast("Name saved");
+}
+function copyUserId() { copyText(state.user.id).then(function (ok) { toast(ok ? "ID copied" : "Could not copy — select it manually"); }); }
+
+/* ---------- wallet ---------- */
+function walletAssetBalance(chainKey, symbol) {
+  var data = ui.wallet && ui.wallet.data;
+  if (!data || !Array.isArray(data.chains)) return null;
+  var entry = null;
+  data.chains.forEach(function (item) { if (item && item.key === chainKey) entry = item; });
+  if (!entry || !entry.ok || !entry.data) return null;
+  if (entry.data.native.symbol === symbol) return entry.data.native;
+  var found = null;
+  entry.data.tokens.forEach(function (token) { if (token.symbol === symbol) found = token; });
+  return found;
+}
+function rpcCall(chain, method, params) {
+  var index = 0;
+  function attempt() {
+    if (index >= chain.rpcs.length) return Promise.reject(new Error("No " + chain.name + " RPC responded"));
+    var url = chain.rpcs[index];
+    index += 1;
+    return fetchWithTimeout(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: method, params: params || [] }),
+      cache: "no-store"
+    }, 18000).then(function (response) {
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      return response.json();
+    }).then(function (data) {
+      if (!data || data.error) throw new Error((data && data.error && data.error.message) || "RPC error");
+      return data.result;
+    }).catch(function (error) {
+      if (index >= chain.rpcs.length) throw error;
+      return attempt();
+    });
+  }
+  return attempt();
+}
+function erc20BalanceData(address) {
+  return "0x70a08231" + String(address).replace(/^0x/i, "").toLowerCase().padStart(64, "0");
+}
+async function fetchWalletBalances() {
+  var address = state.wallet.address;
+  var chains = [];
+  for (var c = 0; c < WALLET_CHAINS.length; c += 1) {
+    var chain = WALLET_CHAINS[c];
+    try {
+      var nativeHex = await rpcCall(chain, "eth_getBalance", [address, "latest"]);
+      var native = window.ethers.BigNumber.from(nativeHex);
+      var tokens = [];
+      var list = chainTokens(chain);
+      for (var i = 0; i < list.length; i += 1) {
+        var token = list[i];
+        try {
+          var hex = await rpcCall(chain, "eth_call", [{ to: token.address, data: erc20BalanceData(address) }, "latest"]);
+          var balance = window.ethers.BigNumber.from(hex);
+          tokens.push({ symbol: token.symbol, amount: formatAmount(balance, token.decimals), raw: balance.toString() });
+        } catch (e) {
+          tokens.push({ symbol: token.symbol, amount: "—", raw: "0", error: true });
+        }
+      }
+      chains.push({
+        key: chain.key,
+        ok: true,
+        data: {
+          native: { symbol: chain.native.symbol, amount: formatAmount(native, chain.native.decimals), raw: native.toString() },
+          tokens: tokens
+        }
+      });
+    } catch (e) {
+      chains.push({ key: chain.key, ok: false, error: e && e.message ? e.message : String(e) });
+    }
+  }
+  return { chains: chains };
+}
+function refreshWallet(force) {
+  if (!state || !state.wallet || !walletSupported()) return;
+  var w = ui.wallet;
+  if (w.loading) return;
+  if (!force && w.at && Date.now() - w.at < WALLET_REFRESH_MS) return;
+  w.loading = true;
+  w.error = "";
+  paintWalletBalances();
+  var address = state.wallet.address;
+  fetchWalletBalances().then(function (data) {
+    if (!state || !state.wallet || state.wallet.address !== address) return;
+    w.data = data;
+  }).catch(function (error) {
+    w.error = error && error.message ? error.message : "network error";
+  }).then(function () {
+    w.at = Date.now();
+    w.loading = false;
+    paintWalletBalances();
+  });
+}
+function paintWalletBalances() {
+  if (!$root) return;
+  var box = $root.querySelector('[data-role="wallet-balances"]');
+  if (box) box.innerHTML = walletBalancesHTML();
+}
+function walletRowHTML(label, value, dim) {
+  return '<div class="cm-wrow"><span class="cm-wsym">' + escapeHTML(label) + "</span>" +
+    '<span class="cm-wval' + (dim ? " dim" : "") + '">' + escapeHTML(value) + "</span></div>";
+}
+function walletBalancesHTML() {
+  var w = ui.wallet;
+  var d = w.data;
+  var html = "";
+  WALLET_CHAINS.forEach(function (chain) {
+    var entry = null;
+    if (d && Array.isArray(d.chains)) d.chains.forEach(function (item) { if (item && item.key === chain.key) entry = item; });
+    var chainData = entry && entry.ok ? entry.data : null;
+    var error = entry && !entry.ok ? entry.error : "";
+    html += '<div class="cm-wchain">' +
+      '<div class="cm-wchain-head"><span>' + escapeHTML(chain.name) + " network</span>" +
+      '<span class="cm-wnet">' + escapeHTML(chain.native.symbol) + "</span></div>";
+    html += walletRowHTML(chain.native.symbol, chainData ? chainData.native.amount : (w.loading ? "…" : "—"), !chainData);
+    if (chainData) {
+      chainData.tokens.forEach(function (token) {
+        html += walletRowHTML(token.symbol, token.amount, false);
+      });
+    } else {
+      chainTokens(chain).forEach(function (token) { html += walletRowHTML(token.symbol, w.loading ? "…" : "—", true); });
+    }
+    if (error) html += '<div class="cm-werror">' + escapeHTML(error) + "</div>";
+    html += "</div>";
+  });
+  if (w.error) html += '<div class="cm-werror">' + escapeHTML(w.error) + "</div>";
+  return html;
+}
+function profileImageURL() { return (state && state.profileImage) || DEFAULT_PROFILE_IMAGE; }
+function setProfilePictureFromFile() {
+  if (!state) return;
+  var input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.style.display = "none";
+  document.body.appendChild(input);
+  input.onchange = function () {
+    var file = input.files && input.files[0];
+    input.remove();
+    if (!file) return;
+    readFileAsDataURL(file).then(compressProfileImage).then(function (dataUrl) {
+      if (!state) return;
+      state.profileImage = dataUrl;
+      saveState();
+      render();
+      toast("Profile picture updated");
+    }).catch(function (error) {
+      toast(error && error.message ? error.message : "Could not set the picture");
+    });
+  };
+  input.click();
+}
+function normalizeNftUri(value) {
+  var url = String(value || "").trim();
+  if (url.indexOf("ipfs://") === 0) url = "https://ipfs.io/ipfs/" + url.slice(7);
+  if (url.indexOf("ipfs/") === 0) url = "https://ipfs.io/" + url;
+  if (url.indexOf("ar://") === 0) url = "https://arweave.net/" + url.slice(5);
+  return url;
+}
+function fetchNftMetadata(uri) {
+  if (uri.indexOf("data:application/json") === 0) {
+    var comma = uri.indexOf(",");
+    var jsonText = comma >= 0 ? uri.slice(comma + 1) : "";
+    if (/;base64/i.test(uri.slice(0, comma))) jsonText = atob(jsonText);
+    return Promise.resolve(JSON.parse(jsonText));
+  }
+  var url = normalizeNftUri(uri);
+  if (/\.(png|jpe?g|gif|webp|svg)(\?|#|$)/i.test(url)) return Promise.resolve({ image: url });
+  return fetchWithTimeout(url, { cache: "no-store" }, 15000).then(function (r) {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  });
+}
+function fetchNftImage(contract, tokenId, chainKey) {
+  var chain = walletChainByKey(chainKey || "celo");
+  if (!chain) return Promise.reject(new Error("Unknown network"));
+  var iface = new window.ethers.utils.Interface(NFT_ABI);
+  var data = iface.encodeFunctionData("tokenURI", [tokenId]);
+  return rpcCall(chain, "eth_call", [{ to: contract, data: data }, "latest"]).then(function (hex) {
+    var uri = "";
+    try { uri = iface.decodeFunctionResult("tokenURI", hex)[0]; } catch (e) { uri = ""; }
+    if (!uri) throw new Error("The contract returned an empty token URI");
+    return fetchNftMetadata(uri);
+  }).then(function (meta) {
+    var image = meta && (meta.image || meta.image_url || meta.animation_url);
+    if (!image) throw new Error("No image in the NFT metadata");
+    return normalizeNftUri(image);
+  });
+}
+function setProfilePictureFromNft() {
+  if (!state) return;
+  var contract = window.prompt("NFT contract address (0x…)");
+  if (!contract) return;
+  if (!isAddress(contract.trim())) { toast("Enter a valid contract address"); return; }
+  var tokenId = window.prompt("Token ID");
+  if (tokenId == null || !String(tokenId).trim()) return;
+  var network = window.prompt("Network: celo or bsc", "celo");
+  if (!network) return;
+  toast("Looking up NFT…", 4000);
+  fetchNftImage(contract.trim(), String(tokenId).trim(), network.trim().toLowerCase()).then(function (url) {
+    if (!state) return;
+    state.profileImage = sanitizeProfileImage(url) || url;
+    saveState();
+    render();
+    toast("Profile picture updated from NFT");
+  }).catch(function (error) {
+    toast("Could not load that NFT: " + (error && error.message ? error.message : String(error)), 7000);
+  });
+}
+function resetProfilePicture() {
+  if (!state) return;
+  state.profileImage = "";
+  saveState();
+  render();
+  toast("Using the default profile picture");
+}
+function walletCreate() {
+  if (!state) return;
+  var wallet = makeWallet();
+  if (!wallet) { toast("This device cannot create a wallet. Update Android System WebView."); return; }
+  state.wallet = wallet;
+  ui.wallet = { data: null, loading: false, error: "", at: 0 };
+  saveState();
+  render();
+  refreshWallet(true);
+  toast("Wallet created");
+}
+function walletImport() {
+  if (!state) return;
+  var raw = window.prompt("Paste your wallet private key (64 hex characters)");
+  if (!raw) return;
+  var wallet = cleanWallet({ privateKey: raw });
+  if (!wallet) { toast("That private key is not valid"); return; }
+  state.wallet = wallet;
+  ui.wallet = { data: null, loading: false, error: "", at: 0 };
+  saveState();
+  render();
+  refreshWallet(true);
+  toast("Wallet imported");
+}
+function walletCopy() {
+  if (!state || !state.wallet) return;
+  copyText(state.wallet.address).then(function (ok) { toast(ok ? "Wallet address copied" : "Could not copy the address"); });
+}
+function walletReveal() {
+  if (!state || !state.wallet) return;
+  if (!window.confirm("Show your private key? Never share it with anyone. Anyone with this key can take your funds.")) return;
+  var modal = openModal("Back up wallet key");
+  modal.body.appendChild(el("p", "cm-muted", "Wallet address: " + state.wallet.address));
+  var code = el("div", "cm-idbox", state.wallet.privateKey);
+  modal.body.appendChild(code);
+  modal.body.appendChild(el("p", "cm-muted", "Write this key down and keep it offline. If you lose it, the funds are gone."));
+  var copy = el("button", "cm-btn primary", "Copy key");
+  copy.onclick = function () { copyText(state.wallet.privateKey).then(function (ok) { toast(ok ? "Key copied" : "Could not copy — select it manually"); }); };
+  var close = el("button", "cm-btn", "Close");
+  close.onclick = modal.close;
+  modal.actions.appendChild(close);
+  modal.actions.appendChild(copy);
+}
+function saveHdoToken() {
+  var input = document.getElementById("hdoInput");
+  var value = input ? String(input.value || "").trim() : "";
+  if (value && !isAddress(value)) { toast("Enter a full 0x… contract address (42 characters)"); return; }
+  state.settings.hdoToken = value;
+  saveState();
+  ui.wallet = { data: null, loading: false, error: "", at: 0 };
+  render();
+  refreshWallet(true);
+  toast(value ? "HDO contract saved" : "Using the default HDO contract");
+}
+
+/* ---------- token / airdrop actions ---------- */
+async function sendTokenOnChain(options) {
+  if (!walletSupported()) throw new Error("This device cannot sign transactions");
+  var chain = walletChainByKey(options && options.chainKey);
+  if (!chain) throw new Error("Choose a network");
+  if (!isAddress(options.to)) throw new Error("Enter a valid wallet address");
+  var token = options.token || null;
+  var amount = options.amountRaw;
+  if (!amount || amount.lte(0)) throw new Error("Enter an amount");
+  var key = String(options.privateKey || (state.wallet && state.wallet.privateKey) || "").replace(/^0x/i, "").toLowerCase();
+  if (!isHexKey(key)) throw new Error("Create a wallet first");
+  var signer = new window.ethers.Wallet("0x" + key);
+  var txTo = token ? token.address : options.to;
+  var value = token ? window.ethers.BigNumber.from(0) : amount;
+  var data = token ? new window.ethers.utils.Interface(ERC20_ABI).encodeFunctionData("transfer", [options.to, amount]) : "0x";
+  var nonceHex = await rpcCall(chain, "eth_getTransactionCount", [signer.address, "pending"]);
+  var gasPriceHex = await rpcCall(chain, "eth_gasPrice", []);
+  var gasLimit;
+  try {
+    var estimateHex = await rpcCall(chain, "eth_estimateGas", [{ from: signer.address, to: txTo, data: data, value: "0x" + value.toString(16) }]);
+    gasLimit = window.ethers.BigNumber.from(estimateHex).mul(120).div(100);
+  } catch (e) {
+    gasLimit = window.ethers.BigNumber.from(token ? 65000 : 21000);
+  }
+  var raw = await signer.signTransaction({
+    nonce: window.ethers.BigNumber.from(nonceHex).toNumber(),
+    gasPrice: window.ethers.BigNumber.from(gasPriceHex),
+    gasLimit: gasLimit,
+    to: txTo,
+    value: value,
+    data: data,
+    chainId: chain.chainId
+  });
+  var hash = await rpcCall(chain, "eth_sendRawTransaction", [raw]);
+  if (!/^0x[0-9a-f]{64}$/i.test(String(hash || ""))) throw new Error("The network did not return a transaction hash");
+  return {
+    chainKey: chain.key,
+    chainName: chain.name,
+    symbol: token ? token.symbol : chain.native.symbol,
+    amount: String(options.amountText || "").replace(/,/g, ""),
+    to: options.to,
+    tx: hash
+  };
+}
+async function createAirdrop(options) {
+  if (!state.wallet) throw new Error("Create a wallet first");
+  var chain = walletChainByKey(options.chainKey);
+  if (!chain) throw new Error("Choose a network");
+  var token = options.token || null;
+  var amount = options.amountRaw;
+  if (!amount || amount.lte(0)) throw new Error("Enter an amount");
+  var claim = makeWallet();
+  if (!claim) throw new Error("Could not create a temporary claim wallet");
+  var gasPrice = window.ethers.BigNumber.from(await rpcCall(chain, "eth_gasPrice", []));
+  var stipend = gasPrice.mul(token ? 160000 : 50000);
+  var info = {
+    chainKey: chain.key,
+    claimKey: claim.privateKey,
+    claimAddress: claim.address,
+    amount: String(options.amountText || "").replace(/,/g, ""),
+    amountRaw: amount,
+    decimals: token ? token.decimals : chain.native.decimals,
+    symbol: token ? token.symbol : chain.native.symbol,
+    tokenAddress: token ? token.address : "",
+    fundingTx: "",
+    stipendTx: ""
+  };
+  if (!/^\d+(\.\d+)?$/.test(info.amount)) info.amount = formatAmount(amount, info.decimals);
+
+  if (token) {
+    var fund = await sendTokenOnChain({
+      chainKey: chain.key,
+      token: null,
+      to: claim.address,
+      amountRaw: stipend,
+      amountText: formatAmount(stipend, chain.native.decimals)
+    });
+    info.stipendTx = fund.tx;
+    var funded = await sendTokenOnChain({
+      chainKey: chain.key,
+      token: token,
+      to: claim.address,
+      amountRaw: amount,
+      amountText: info.amount
+    });
+    info.fundingTx = funded.tx;
+    return info;
+  }
+  var sent = await sendTokenOnChain({
+    chainKey: chain.key,
+    token: null,
+    to: claim.address,
+    amountRaw: amount.add(stipend),
+    amountText: formatAmount(amount.add(stipend), chain.native.decimals)
+  });
+  info.fundingTx = sent.tx;
+  return info;
+}
+function airdropForMessage(message) { return message && message.airdrop ? sanitizeAirdrop(message.airdrop) : null; }
+function findMessage(id) {
+  if (!state || ui.mode !== "thread") return null;
+  var threadKey = ui.peer === "community" ? ("room:" + roomSlug()) : ("dm:" + ui.peer);
+  var thread = state.threads[threadKey];
+  if (!thread) return null;
+  for (var i = 0; i < thread.messages.length; i += 1) if (thread.messages[i].id === id) return thread.messages[i];
+  return null;
+}
+async function claimAirdropById(id) {
+  var message = findMessage(id);
+  var airdrop = airdropForMessage(message);
+  if (!message || !airdrop) return;
+  if (airdrop.claimed || airdrop.claimedTx) { toast("This airdrop has already been claimed"); return; }
+  if (!state.wallet) { toast("Create or import a wallet first"); return; }
+  var chain = walletChainByKey(airdrop.chain);
+  if (!chain) { toast("This airdrop uses an unsupported network"); return; }
+  if (!window.confirm("Claim " + airdrop.amount + " " + airdrop.symbol + " on " + chain.name + " to your wallet " + state.wallet.address + "?\n\nThe first claim succeeds. This cannot be undone.")) return;
+  toast("Claiming " + airdrop.amount + " " + airdrop.symbol + " on " + chain.name + "…", 9000);
+  try {
+    var token = airdrop.tokenAddress ? { address: airdrop.tokenAddress, symbol: airdrop.symbol, decimals: airdrop.decimals } : null;
+    var result = await sendTokenOnChain({
+      chainKey: airdrop.chain,
+      token: token,
+      to: state.wallet.address,
+      amountRaw: parseUnits(airdrop.amount, airdrop.decimals),
+      amountText: airdrop.amount,
+      privateKey: airdrop.claimKey
+    });
+    airdrop.claimed = true;
+    airdrop.claimedTx = result.tx;
+    message.airdrop = airdrop;
+    saveState();
+    render();
+    toast("✅ Claimed " + airdrop.amount + " " + airdrop.symbol + " on " + chain.name, 8000);
+    refreshWallet(true);
+  } catch (e) {
+    toast("Airdrop not claimed: " + (e && e.message ? e.message : String(e)), 9000);
+  }
+}
+
+/* ---------- modal helpers ---------- */
+function el(tag, cls, text) {
+  var node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text != null) node.textContent = text;
+  return node;
+}
+function openModal(title) {
+  var overlay = el("div", "cm-modal");
+  var card = el("div", "cm-card");
+  var heading = el("h3", "", title);
+  var body = el("div");
+  var actions = el("div", "cm-modal-actions");
+  card.appendChild(heading);
+  card.appendChild(body);
+  card.appendChild(actions);
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  function close() { overlay.remove(); }
+  overlay.addEventListener("click", function (e) { if (e.target === overlay) close(); });
+  return { body: body, actions: actions, close: close };
+}
+function field(labelText, control) {
+  var wrap = el("div", "cm-field");
+  wrap.appendChild(el("label", "cm-label", labelText));
+  wrap.appendChild(control);
+  return wrap;
+}
+function selectInput(options, value) {
+  var select = el("select", "cm-input cm-select");
+  options.forEach(function (option) {
+    var item = document.createElement("option");
+    item.value = option.value;
+    item.textContent = option.label;
+    select.appendChild(item);
+  });
+  if (value != null) select.value = value;
+  return select;
+}
+function inputBox(placeholder, value) {
+  var input = el("input", "cm-input");
+  input.type = "text";
+  input.placeholder = placeholder || "";
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  if (value) input.value = value;
+  return input;
+}
+function chatTokenOptions(chain, scope) {
+  var tokens = chainTokens(chain);
+  if (scope === "all" || scope === "wallet") return tokens;
+  if (scope === "public") return tokens.filter(function (token) { return token.symbol === PUBLIC_ROOM_TOKEN; });
+  return tokens.filter(function (token) { return PRIVATE_CHAT_TOKENS.indexOf(token.symbol) !== -1; });
+}
+
+function openSendTokenModal(post) {
+  if (!state) return;
+  if (post && (ui.mode !== "thread" || !ui.peer)) { toast("Open a room or direct chat first"); return; }
+  if (post && ui.peer === "community" && isAiRoom()) { toast("Tokens can't be sent in the AI Room"); return; }
+  if (!state.wallet) { toast("Create or import a wallet first"); return; }
+  if (!walletSupported()) { toast("This device cannot sign transactions"); return; }
+
+  var publicScope = post && ui.peer === "community" && isPresetRoom(roomSlug());
+  var scope = post ? (publicScope ? "public" : "private") : "wallet";
+  var allowedChains = publicScope ? WALLET_CHAINS.filter(function (c) { return c.key === "celo"; }) : WALLET_CHAINS;
+  var delivery = "send";
+  var modal = openModal(post ? "Send tokens in this chat" : "Send tokens");
+
+  if (post) {
+    var where = ui.peer === "community"
+      ? "You are in " + roomInfo(roomSlug()).name + ". Paste the wallet address of the person you want to pay. Choose Airdrop to let the first room member claim the tokens."
+      : "This sends tokens on-chain to your friend's wallet address.";
+    modal.body.appendChild(el("p", "cm-muted", where));
+    modal.body.appendChild(el("p", "cm-muted", publicScope ? "This public room only supports HDO." : "Private rooms and direct chats support CELO, USDT, USDC, HDO and BTC."));
+    var deliverySelect = selectInput([{ value: "send", label: "Send to a wallet address" }, { value: "airdrop", label: "Airdrop — first person to claim it" }], "send");
+    modal.body.appendChild(field("Delivery", deliverySelect));
+  }
+
+  var chainSelect = selectInput(allowedChains.map(function (c) { return { value: c.key, label: c.name + " · " + c.native.symbol }; }), allowedChains[0].key);
+  modal.body.appendChild(field("Network", chainSelect));
+  var assetSelect = el("select", "cm-input cm-select");
+  modal.body.appendChild(field("Token", assetSelect));
+  var toInput = inputBox("0x… (42 characters)");
+  if (post && ui.peer !== "community" && state.contacts[ui.peer] && state.contacts[ui.peer].wallet) toInput.value = state.contacts[ui.peer].wallet;
+  var toField = field("Recipient wallet address", toInput);
+  modal.body.appendChild(toField);
+  var amountInput = inputBox("0.0");
+  amountInput.inputMode = "decimal";
+  modal.body.appendChild(field("Amount", amountInput));
+  var info = el("p", "cm-muted", "");
+  modal.body.appendChild(info);
+
+  function currentChain() { return walletChainByKey(chainSelect.value) || allowedChains[0]; }
+  function currentAsset() {
+    var active = currentChain();
+    var value = String(assetSelect.value || "native");
+    if (value === "native") return { symbol: active.native.symbol, decimals: active.native.decimals, address: "", native: true };
+    var tokens = chainTokens(active);
+    for (var i = 0; i < tokens.length; i += 1) if (String(tokens[i].address).toLowerCase() === value.toLowerCase()) return tokens[i];
+    return { symbol: active.native.symbol, decimals: active.native.decimals, address: "", native: true };
+  }
+  function updateInfo() {
+    var active = currentChain();
+    var asset = currentAsset();
+    var balance = walletAssetBalance(active.key, asset.symbol);
+    info.textContent = "Available: " + (balance ? balance.amount + " " + asset.symbol : "not loaded — refresh the wallet first") +
+      "\nNetwork fee is paid in " + active.native.symbol + ".";
+  }
+  function fillAssets() {
+    var active = currentChain();
+    assetSelect.innerHTML = "";
+    var preferred = "";
+    var tokens = chatTokenOptions(active, scope);
+    var allowNative = scope !== "public";
+    if (allowNative) {
+      var nativeOption = document.createElement("option");
+      nativeOption.value = "native";
+      nativeOption.textContent = active.native.symbol + " (native)";
+      assetSelect.appendChild(nativeOption);
+      preferred = "native";
+    }
+    tokens.forEach(function (token) {
+      var option = document.createElement("option");
+      option.value = token.address;
+      option.textContent = token.symbol;
+      assetSelect.appendChild(option);
+    });
+    if (scope === "public" || (post && delivery === "airdrop")) {
+      tokens.forEach(function (token) { if (token.symbol === PUBLIC_ROOM_TOKEN) preferred = token.address; });
+    }
+    assetSelect.value = preferred || (tokens.length ? tokens[0].address : "native");
+    updateInfo();
+  }
+  chainSelect.onchange = fillAssets;
+  assetSelect.onchange = updateInfo;
+  fillAssets();
+
+  function applyDelivery() {
+    delivery = deliverySelect ? String(deliverySelect.value || "send") : "send";
+    var isAirdrop = post && delivery === "airdrop";
+    toField.style.display = isAirdrop ? "none" : "";
+    sendButton.textContent = isAirdrop ? "Create airdrop" : "Send";
+    fillAssets();
+    info.textContent = "";
+    updateInfo();
+    if (isAirdrop) info.textContent += "\nAirdrop funding also pays a small gas stipend so the claimer can move the funds.";
+  }
+
+  var cancel = el("button", "cm-btn", "Cancel");
+  cancel.onclick = modal.close;
+  var sendButton = el("button", "cm-btn primary", "Send");
+  sendButton.onclick = async function () {
+    var active = currentChain();
+    var asset = currentAsset();
+    var isAirdrop = post && delivery === "airdrop";
+    var to = String(toInput.value || "").trim();
+    var amountText = String(amountInput.value || "").trim();
+    if (!isAirdrop && !isAddress(to)) { toast("Enter a valid 0x wallet address (42 characters)"); return; }
+    var amountRaw;
+    try { amountRaw = parseUnits(amountText, asset.decimals); } catch (e) { toast("Enter a valid amount"); return; }
+    if (amountRaw.lte(0)) { toast("Enter an amount greater than zero"); return; }
+    modal.close();
+    if (isAirdrop) {
+      if (!window.confirm("Create an airdrop of " + amountText + " " + asset.symbol + " on " + active.name + "?\n\nThe first person in this chat to claim gets the tokens. This cannot be undone.")) return;
+      toast("Funding the airdrop on " + active.name + "…", 9000);
+      try {
+        var airdropInfo = await createAirdrop({ chainKey: active.key, token: asset.native ? null : asset, amountRaw: amountRaw, amountText: amountText });
+        await sendMessage("", "", { airdrop: airdropInfo });
+        toast("Airdrop posted. The first person to claim gets it.", 7000);
+        refreshWallet(true);
+      } catch (e) {
+        toast("Airdrop not created: " + (e && e.message ? e.message : String(e)), 9000);
+      }
+      return;
+    }
+    if (!window.confirm("Send " + amountText + " " + asset.symbol + " on " + active.name + " to " + to + "?\n\nThis cannot be undone.")) return;
+    toast("Signing and sending on " + active.name + "…", 9000);
+    try {
+      var result = await sendTokenOnChain({ chainKey: active.key, token: asset.native ? null : asset, to: to, amountRaw: amountRaw, amountText: amountText });
+      if (post) {
+        if (ui.peer !== "community" && state.contacts[ui.peer]) { state.contacts[ui.peer].wallet = to; saveState(); }
+        await sendMessage("", "", { token: { chain: result.chainKey, symbol: result.symbol, amount: result.amount, to: result.to, tx: result.tx } });
+      }
+      toast("✅ Sent " + result.amount + " " + result.symbol + " on " + result.chainName, 8000);
+      refreshWallet(true);
+    } catch (e) {
+      toast("Token not sent: " + (e && e.message ? e.message : String(e)), 9000);
+    }
+  };
+  modal.actions.appendChild(cancel);
+  modal.actions.appendChild(sendButton);
+  if (deliverySelect) deliverySelect.onchange = applyDelivery;
+  applyDelivery();
+}
 
 /* ---------- render ---------- */
-function render() { if (!$root) return; if (ui.mode === "thread") renderThread(); else renderTabs(); }
+function render() {
+  if (!$root) return;
+  if (ui.mode === "thread") renderThread();
+  else renderTabs();
+}
+function renderStatus() { /* status is shown in the Me tab */ }
 function renderTabs() {
-  var tabs = ["chats", "people", "me"];
-  var html = '<div class="cm-topbar"><h1>Community Chat</h1><span class="cm-muted">' + escapeHTML(state.user.emoji) + " " + escapeHTML(state.user.name) + "</span></div>";
-  html += '<div class="cm-tabs">' + tabs.map(function (t) { return '<button class="cm-tab' + (ui.tab === t ? " active" : "") + '" data-tab="' + t + '">' + (t === "chats" ? "Chats" : t === "people" ? "People" : "Me") + "</button>"; }).join("") + "</div>";
+  var tabs = ["chats", "people", "wallet", "me"];
+  var labels = { chats: "Chats", people: "People", wallet: "Wallet", me: "Me" };
+  var html = '<div class="cm-topbar">' +
+    '<img class="cm-logo" src="icon.png" alt="Community Chat">' +
+    '<h1>Community Chat</h1>' +
+    '<img class="cm-topavatar" src="' + escapeHTML(profileImageURL()) + '" alt="' + escapeHTML(state.user.name) + '" title="' + escapeHTML(state.user.name) + '"></div>';
+  html += '<div class="cm-tabs">' + tabs.map(function (t) {
+    return '<button class="cm-tab' + (ui.tab === t ? " active" : "") + '" data-tab="' + t + '">' + labels[t] + "</button>";
+  }).join("") + "</div>";
   html += '<div class="cm-content">';
   if (ui.tab === "chats") html += renderChats();
   else if (ui.tab === "people") html += renderPeople();
+  else if (ui.tab === "wallet") html += renderWallet();
   else html += renderMe();
   html += "</div>";
   $root.innerHTML = html;
-  $root.querySelectorAll("[data-tab]").forEach(function (b) { b.onclick = function () { ui.tab = b.dataset.tab; render(); }; });
+  $root.querySelectorAll("[data-tab]").forEach(function (b) {
+    b.onclick = function () { ui.tab = b.dataset.tab; render(); };
+  });
   bindActions();
+  if (ui.tab === "wallet") setTimeout(function () { refreshWallet(false); }, 0);
+}
+function lastPreview(thread) {
+  if (!thread || !thread.messages.length) return "No messages yet";
+  var m = thread.messages[thread.messages.length - 1];
+  if (m.token) return "💸 " + m.token.amount + " " + m.token.symbol;
+  if (m.airdrop) return "🎁 " + m.airdrop.amount + " " + m.airdrop.symbol;
+  if (m.image && !m.text) return "📷 Photo";
+  return String(m.text || "").slice(0, 48);
 }
 function renderChats() {
   var slug = roomSlug();
   var info = roomInfo(slug);
-  var html = '<div class="cm-card"><div class="cm-row" data-action="open-room"><span class="cm-avatar">' + info.emoji + '</span><div><div class="cm-rowname">' + escapeHTML(info.name) + '</div><div class="cm-rowsub">' + escapeHTML(info.desc) + "</div></div></div></div>";
-  html += '<div class="cm-section-title" style="font-weight:700;margin:8px 0">Direct chats</div>';
+  var thread = state.threads["room:" + slug];
+  var html = '<div class="cm-card"><div class="cm-row" data-action="open-room"><span class="cm-avatar">' + info.emoji + '</span><div style="flex:1"><div class="cm-rowname">' + escapeHTML(info.name) + '</div><div class="cm-rowsub">' + escapeHTML(lastPreview(thread)) + "</div></div></div></div>";
+  html += '<div class="cm-section-title">Direct chats</div>';
   var dms = Object.keys(state.contacts);
   if (!dms.length) html += '<div class="cm-empty">No direct chats yet. Add a friend in People.</div>';
   dms.forEach(function (id) {
     var c = state.contacts[id];
     var th = state.threads["dm:" + id];
     var unread = th ? (th.unread || 0) : 0;
-    html += '<div class="cm-row" data-action="open-dm" data-id="' + escapeHTML(id) + '"><span class="cm-avatar">' + escapeHTML(c.emoji) + '</span><div style="flex:1"><div class="cm-rowname">' + escapeHTML(c.name) + verifiedBadge(id) + '</div><div class="cm-rowsub">' + escapeHTML(id) + (unread ? " · " + unread + " new" : "") + "</div></div></div>";
+    var online = c.lastSeen && Date.now() - c.lastSeen < ONLINE_MS;
+    html += '<div class="cm-row" data-action="open-dm" data-id="' + escapeHTML(id) + '"><span class="cm-avatar">' + escapeHTML(c.emoji) + '</span><div style="flex:1"><div class="cm-rowname">' + escapeHTML(c.name) + verifiedBadge(id) + (online ? ' <span class="cm-online">online</span>' : "") + '</div><div class="cm-rowsub">' + escapeHTML(lastPreview(th)) + (unread ? " · " + unread + " new" : "") + "</div></div></div>";
   });
-  // room picker
   html += '<div class="cm-card" style="margin-top:12px"><h3>Rooms</h3><div class="cm-btn-row">';
-  ROOMS.forEach(function (r) { html += '<button class="cm-btn' + (slug === r.slug ? " primary" : "") + '" data-action="set-room" data-slug="' + r.slug + '">' + r.emoji + " " + r.name + "</button>"; });
+  ROOMS.forEach(function (r) {
+    html += '<button class="cm-btn' + (slug === r.slug ? " primary" : "") + '" data-action="set-room" data-slug="' + r.slug + '">' + r.emoji + " " + r.name + "</button>";
+  });
   html += '</div><div class="cm-inline" style="margin-top:8px"><input class="cm-input" id="roomInput" placeholder="custom room code"><button class="cm-btn" data-action="join-room">Join</button></div></div>';
   return html;
 }
 function renderPeople() {
   var contacts = Object.keys(state.contacts);
   var html = '<div class="cm-card"><h3>Add contact</h3><div class="cm-inline"><input class="cm-input" id="contactInput" placeholder="CM-XXXX-XXXX"><button class="cm-btn primary" data-action="add-contact">Add</button></div></div>';
-  html += '<div class="cm-section-title" style="font-weight:700;margin:8px 0">People you know</div>';
+  html += '<div class="cm-section-title">People you know</div>';
   if (!contacts.length) html += '<div class="cm-empty">No contacts yet.</div>';
   contacts.forEach(function (id) {
     var c = state.contacts[id];
-    html += '<div class="cm-row" data-action="open-dm" data-id="' + escapeHTML(id) + '"><span class="cm-avatar">' + escapeHTML(c.emoji) + '</span><div style="flex:1"><div class="cm-rowname">' + escapeHTML(c.name) + verifiedBadge(id) + '</div><div class="cm-rowsub">' + escapeHTML(id) + '</div></div></div>';
+    var online = c.lastSeen && Date.now() - c.lastSeen < ONLINE_MS;
+    html += '<div class="cm-row" data-action="open-dm" data-id="' + escapeHTML(id) + '"><span class="cm-avatar">' + escapeHTML(c.emoji) + '</span><div style="flex:1"><div class="cm-rowname">' + escapeHTML(c.name) + verifiedBadge(id) + (online ? ' <span class="cm-online">online</span>' : "") + '</div><div class="cm-rowsub">' + escapeHTML(id) + "</div></div></div>";
   });
-  html += '<div class="cm-card" style="margin-top:12px"><h3>Verified badge</h3><p class="cm-muted">' + (state.user.id === DEV_ID ? "Your developer profile is verified." : "Message " + DEV_ID + " to request a badge. Include your ID " + state.user.id + ".") + '</p>' + (state.user.id !== DEV_ID ? '<div class="cm-btn-row"><button class="cm-btn primary" data-action="message-dev">Message developer</button></div>' : '') + '</div>';
+  html += '<div class="cm-card" style="margin-top:12px"><h3>Verified badge</h3><p class="cm-muted">' + (state.user.id === DEV_ID ? "Your developer profile is verified." : "Message " + DEV_ID + " to request a badge. Include your ID " + state.user.id + ".") + "</p>" + (state.user.id !== DEV_ID ? '<div class="cm-btn-row"><button class="cm-btn primary" data-action="message-dev">Message developer</button></div>' : "") + "</div>";
   return html;
 }
 function renderMe() {
   var html = '<div class="cm-card"><h3>Profile</h3><div class="cm-inline"><input class="cm-input" id="nameInput" value="' + escapeHTML(state.user.name) + '"><button class="cm-btn primary" data-action="save-name">Save</button></div><p class="cm-muted">ID: <span class="cm-idbox">' + escapeHTML(state.user.id) + '</span></p><div class="cm-btn-row"><button class="cm-btn" data-action="copy-id">Copy ID</button></div></div>';
   html += '<div class="cm-card"><h3>Relay</h3><div class="cm-inline"><input class="cm-input" id="relayInput" value="' + escapeHTML(state.settings.relay) + '"><button class="cm-btn primary" data-action="save-relay">Save</button></div><p class="cm-muted">Default: community-relay.hdo-box.workers.dev. Everyone must use the same relay.</p></div>';
-  html += '<div class="cm-card"><h3>About</h3><p class="cm-muted">Community Chat web v' + VERSION + " · " + (ui.status || "") + "</p></div>";
+  html += '<div class="cm-card"><h3>About</h3><p class="cm-muted">Community Chat web v' + VERSION + " · " + escapeHTML(ui.status || "") + "</p></div>";
   return html;
+}
+function renderWallet() {
+  if (!walletSupported()) {
+    return '<div class="cm-card"><h3>Wallet</h3><p class="cm-muted">This WebView does not support the features a wallet needs. Update Android System WebView and reopen the app.</p></div>';
+  }
+  if (!state.wallet) {
+    return '<div class="cm-card"><h3>Wallet</h3><p>No wallet on this phone yet.</p><div class="cm-btn-row"><button class="cm-btn primary" data-action="wallet-create">Create wallet</button><button class="cm-btn" data-action="wallet-import">Import wallet</button></div></div>';
+  }
+  return '<div class="cm-card cm-wallet">' +
+    "<h3>Wallet</h3>" +
+    '<div class="cm-wprofile">' +
+      '<img class="cm-wavatar" src="' + escapeHTML(profileImageURL()) + '" alt="Profile picture">' +
+      '<div class="cm-wprofile-actions">' +
+        '<button class="cm-btn" data-action="set-profile-picture">Set picture</button>' +
+        '<button class="cm-btn" data-action="set-profile-nft">Set NFT</button>' +
+        '<button class="cm-btn" data-action="reset-profile-picture">Use default</button>' +
+      "</div>" +
+    "</div>" +
+    '<p>Your wallet address on <b>Celo</b> and <b>BSC</b>. It was created on this phone and only you hold the key.</p>' +
+    '<div class="cm-idbox cm-addrbox"><code>' + escapeHTML(state.wallet.address) + "</code>" +
+      '<button class="cm-chip" data-action="wallet-copy">Copy</button></div>' +
+    '<div class="cm-wbal" data-role="wallet-balances">' + walletBalancesHTML() + "</div>" +
+    '<div class="cm-btn-row">' +
+      '<button class="cm-btn primary" data-action="wallet-send">Send tokens</button>' +
+      '<button class="cm-btn" data-action="wallet-refresh">Refresh</button>' +
+    "</div>" +
+    '<div class="cm-btn-row">' +
+      '<button class="cm-btn" data-action="wallet-reveal">Back up key</button>' +
+      '<button class="cm-btn" data-action="wallet-import">Import wallet</button>' +
+    "</div>" +
+    "<details><summary>Token settings</summary>" +
+      '<label class="cm-label" for="hdoInput">HDO token contract (Celo)</label>' +
+      '<div class="cm-inline"><input class="cm-input" id="hdoInput" type="text" spellcheck="false" placeholder="0x…" value="' + escapeHTML(state.settings.hdoToken || HDO_TOKEN_DEFAULT) + '"><button class="cm-btn primary" data-action="wallet-save-hdo">Save</button></div>' +
+      '<p class="cm-muted">HDO is read from this contract on Celo. G$, USDT, USDC and bridged BTC use their official Celo contracts.</p>' +
+    "</details>" +
+    '<p class="cm-muted">Never share your private key. If you lose this phone without a backup, the funds are gone. A token transfer is public on its blockchain even when the chat note is encrypted.</p>' +
+  "</div>";
 }
 function renderThread() {
   var peer = ui.peer;
@@ -447,52 +1593,127 @@ function renderThread() {
   var threadKey = isCommunity ? ("room:" + slug) : ("dm:" + peer);
   var thread = state.threads[threadKey];
   var msgs = thread ? thread.messages : [];
-  var html = '<div class="cm-thread"><div class="cm-thread-head"><button class="cm-btn" data-action="back">←</button><div style="flex:1"><div class="cm-rowname">' + escapeHTML(name) + (isCommunity ? "" : verifiedBadge(peer)) + '</div></div></div>';
+  var contact = !isCommunity ? state.contacts[peer] : null;
+  var online = contact && contact.lastSeen && Date.now() - contact.lastSeen < ONLINE_MS;
+  var html = '<div class="cm-thread"><div class="cm-thread-head"><button class="cm-btn" data-action="back">←</button><div style="flex:1"><div class="cm-rowname">' + escapeHTML(name) + (isCommunity ? "" : verifiedBadge(peer)) + (online ? ' <span class="cm-online">online</span>' : "") + '</div><div class="cm-rowsub">' + (isCommunity ? escapeHTML(roomInfo(slug).desc) : escapeHTML(peer)) + "</div></div></div>";
   html += '<div class="cm-thread-msgs" id="msgs">';
+  if (!msgs.length) {
+    html += '<div class="cm-empty">' + (isCommunity && slug === "ai" ? "Ask Lucky AI anything. Replies are private to this app." : "No messages yet. Say hello!") + "</div>";
+  }
   msgs.forEach(function (m) {
     var mine = m.from === state.user.id;
-    html += '<div class="cm-bubble ' + (mine ? "mine" : "") + '">' + (m.image ? '<img src="' + escapeHTML(m.image) + '">' : "") + (m.text ? escapeHTML(m.text) : "") + (m.status === "failed" ? ' <span style="opacity:.7">(failed)</span>' : "") + "</div>";
+    var isAi = m.from === AI_ID;
+    var bubble = '<div class="cm-bubble' + (mine ? " mine" : "") + (isAi ? " ai" : "") + '">';
+    if (!mine && !isCommunity && !isAi) bubble += '<div class="cm-bubble-name">' + escapeHTML(m.name || "Friend") + "</div>";
+    if (m.image) bubble += '<img src="' + escapeHTML(m.image) + '" alt="Photo">';
+    if (m.token) bubble += tokenCardHTML(m.token);
+    else if (m.airdrop) bubble += airdropCardHTML(m);
+    else if (m.text) bubble += escapeHTML(m.text);
+    if (m.status === "failed") bubble += '<div class="cm-msg-error">Not sent' + (m.error ? ": " + escapeHTML(m.error) : "") + ' <button class="cm-linkbtn" data-action="retry" data-id="' + escapeHTML(m.id) + '">Retry</button></div>';
+    else if (m.status === "sending") bubble += '<div class="cm-msg-meta">Sending…</div>';
+    else if (m.unencrypted) bubble += '<div class="cm-msg-meta">🔓 unencrypted</div>';
+    bubble += "</div>";
+    html += bubble;
   });
-  html += '</div><div class="cm-composer"><button class="cm-btn" data-action="pick-image">📷</button><input id="composer" placeholder="Message…"><button class="cm-btn primary" data-action="send">Send</button></div></div>';
+  html += "</div>";
+  if (isCommunity && slug === "ai") {
+    html += '<div class="cm-composer"><input id="composer" placeholder="Ask Lucky AI…"><button class="cm-btn primary" data-action="send">Send</button></div>';
+  } else {
+    html += '<div class="cm-composer"><button class="cm-btn" data-action="pick-image" aria-label="Send photo">📷</button><button class="cm-btn" data-action="send-token" aria-label="Send tokens">💸</button><input id="composer" placeholder="Message…"><button class="cm-btn primary" data-action="send">Send</button></div>';
+  }
+  html += "</div>";
   $root.innerHTML = html;
-  var msgsEl = document.getElementById("msgs"); if (msgsEl) msgsEl.scrollTop = msgsEl.scrollHeight;
+  var msgsEl = document.getElementById("msgs");
+  if (msgsEl) msgsEl.scrollTop = msgsEl.scrollHeight;
   bindActions();
   var comp = document.getElementById("composer");
-  if (comp) { comp.addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); } }); }
+  if (comp) comp.addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); } });
 }
-function renderStatus() { /* no-op */ }
+function tokenCardHTML(token) {
+  var chain = walletChainByKey(token.chain);
+  var url = chain && chain.explorer ? chain.explorer + token.tx : "";
+  return '<div class="cm-token-card"><div class="cm-token-title">💸 Sent ' + escapeHTML(token.amount) + " " + escapeHTML(token.symbol) + "</div>" +
+    '<div class="cm-token-sub">on ' + escapeHTML(chain ? chain.name : token.chain) + "</div>" +
+    (url ? '<button class="cm-linkbtn" data-action="open-tx" data-url="' + escapeHTML(url) + '">View transaction</button>' : "") + "</div>";
+}
+function airdropCardHTML(message) {
+  var airdrop = message.airdrop;
+  var chain = walletChainByKey(airdrop.chain);
+  var claimed = airdrop.claimed || airdrop.claimedTx;
+  var html = '<div class="cm-airdrop-card"><div class="cm-airdrop-top"><span class="cm-airdrop-gift">🎁</span><div><div class="cm-token-title">Airdrop ' + escapeHTML(airdrop.amount) + " " + escapeHTML(airdrop.symbol) + "</div>" +
+    '<div class="cm-token-sub">' + escapeHTML(chain ? chain.name : airdrop.chain) + "</div></div></div>";
+  if (claimed) {
+    html += '<div class="cm-airdrop-note">This airdrop has been claimed.</div>';
+    var url = chain && airdrop.claimedTx ? chain.explorer + airdrop.claimedTx : "";
+    if (url) html += '<button class="cm-linkbtn" data-action="open-tx" data-url="' + escapeHTML(url) + '">View transaction</button>';
+  } else {
+    html += '<button class="cm-btn primary cm-airdrop-btn" data-action="claim-airdrop" data-id="' + escapeHTML(message.id) + '">Claim</button>';
+  }
+  html += "</div>";
+  return html;
+}
 
 /* ---------- bind ---------- */
 function bindActions() {
-  $root.querySelectorAll("[data-action]").forEach(function (el) {
-    el.onclick = function (e) {
-      var a = el.dataset.action;
-      if (a === "open-room") { /* toggle */ }
-      else if (a === "open-dm") openThread(el.dataset.id);
-      else if (a === "set-room") setRoom(el.dataset.slug);
-      else if (a === "join-room") { var v = document.getElementById("roomInput").value; if (v) setRoom(v); }
-      else if (a === "add-contact") { var v = document.getElementById("contactInput").value; addContact(v); }
-      else if (a === "message-dev") { addContact(DEV_ID); openThread(DEV_ID); }
-      else if (a === "save-name") saveName();
-      else if (a === "copy-id") { navigator.clipboard.writeText(state.user.id).then(function () { toast("Copied"); }); }
-      else if (a === "save-relay") { var v = cleanRelay(document.getElementById("relayInput").value); if (!v) { toast("Invalid URL"); return; } state.settings.relay = v; state.cursors = {}; state.dmCursor = null; saveState(); render(); pollNow(); toast("Relay updated"); }
-      else if (a === "back") closeThread();
-      else if (a === "send") doSend();
-      else if (a === "pick-image") document.getElementById("fileInput").click();
-      else if (a === "tab") { ui.tab = el.dataset.tab; render(); }
+  $root.querySelectorAll("[data-action]").forEach(function (node) {
+    node.onclick = function () {
+      var action = node.dataset.action;
+      if (action === "open-room") openThread("community");
+      else if (action === "open-dm") openThread(node.dataset.id);
+      else if (action === "set-room") setRoom(node.dataset.slug);
+      else if (action === "join-room") { var v = document.getElementById("roomInput"); if (v && v.value) setRoom(v.value); }
+      else if (action === "add-contact") { var c = document.getElementById("contactInput"); addContact(c && c.value); }
+      else if (action === "message-dev") { addContact(DEV_ID); openThread(DEV_ID); }
+      else if (action === "save-name") saveName();
+      else if (action === "copy-id") copyUserId();
+      else if (action === "save-relay") {
+        var relayInput = document.getElementById("relayInput");
+        var relay = cleanRelay(relayInput && relayInput.value);
+        if (!relay) { toast("Invalid relay URL"); return; }
+        state.settings.relay = relay;
+        state.cursors = {};
+        state.dmCursor = null;
+        saveState();
+        render();
+        pollNow();
+        toast("Relay updated");
+      }
+      else if (action === "back") closeThread();
+      else if (action === "send") doSend();
+      else if (action === "retry") retryMessage(node.dataset.id);
+      else if (action === "pick-image") document.getElementById("fileInput").click();
+      else if (action === "send-token") openSendTokenModal(true);
+      else if (action === "claim-airdrop") claimAirdropById(node.dataset.id);
+      else if (action === "open-tx") openExternal(node.dataset.url);
+      else if (action === "wallet-create") walletCreate();
+      else if (action === "wallet-import") walletImport();
+      else if (action === "wallet-copy") walletCopy();
+      else if (action === "wallet-reveal") walletReveal();
+      else if (action === "wallet-refresh") refreshWallet(true);
+      else if (action === "wallet-send") openSendTokenModal(false);
+      else if (action === "wallet-save-hdo") saveHdoToken();
+      else if (action === "set-profile-picture") setProfilePictureFromFile();
+      else if (action === "set-profile-nft") setProfilePictureFromNft();
+      else if (action === "reset-profile-picture") resetProfilePicture();
     };
   });
 }
 function doSend() {
-  var comp = document.getElementById("composer"); if (!comp) return;
-  var text = comp.value.trim(); comp.value = "";
-  sendMessage(text, "").then(function () {});
+  var comp = document.getElementById("composer");
+  if (!comp) return;
+  var text = comp.value.trim();
+  if (!text) return;
+  comp.value = "";
+  sendMessage(text, "", {});
 }
 document.getElementById("fileInput").addEventListener("change", function (e) {
-  var f = e.target.files && e.target.files[0]; e.target.value = "";
+  var f = e.target.files && e.target.files[0];
+  e.target.value = "";
   if (!f) return;
-  readFileAsDataURL(f).then(compressImage).then(function (du) {
-    if (ui.mode === "thread") sendMessage("", du);
+  readFileAsDataURL(f).then(compressImage).then(function (dataUrl) {
+    if (ui.mode === "thread") sendMessage("", dataUrl, {});
+  }).catch(function (error) {
+    toast(error && error.message ? error.message : "Could not add that image");
   });
 });
 
@@ -500,7 +1721,6 @@ document.getElementById("fileInput").addEventListener("change", function (e) {
 async function boot() {
   state = loadState();
   await ensureIdentityKeys();
-  // publish public key
   publishPublicKey(true).catch(function () {});
   $root = document.getElementById("app");
   ui.status = "connecting";

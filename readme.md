@@ -102,11 +102,21 @@ The relay stores only encrypted envelopes and keeps the newest 1,000 messages pe
 - If you need a verified badge, open **People → Verified badge** and tap **Message the developer**, or start a direct chat with `CM-6S29-CA2X`.
 - Include your own profile ID (`CM-XXXX-XXXX`) in the message so the developer can identify you.
 
+## Android app (APK)
+
+The same chat is also available as a standalone Android app, built from the `web/` folder with the Acode Android Builder.
+
+- `web/app.js` contains the chat, encryption, wallet, airdrop and relay logic.
+- `web/index.html` loads `ethers.js` and `app.js`; `web/style.css` is the mobile UI.
+- `web/icon.png` is the plugin icon, used as the app icon, the header logo and the favicon.
+- `web/androidbuilder.json` holds the APK name, package id, version and icon URL.
+
+Build it with the Acode **Android Builder** plugin (`action: build` on the `web/` directory), or install a released APK from the repository's Downloads. The APK uses the same relay, room codes, IDs and encryption as the Acode plugin, so plugin and APK users can chat with each other.
+
 ## Privacy
 
 - Messages and contacts are stored locally on your device.
 - Room and direct messages are delivered through a relay (default: `community-relay.hdo-box.workers.dev`), but the relay only receives **encrypted ciphertext**. Everyone you chat with must use the same relay; you can change it in **Me → Relay & connection**. For no daily message limit, deploy the free Community Relay (Cloudflare) from the `relay/` folder and paste its URL.
-- **Rooms:** AES-256-GCM with a key derived from the room code using PBKDF2. Anyone who knows the room code can decrypt the room, so use your own private room code for sensitive conversations. The preset rooms use public codes.
 - **Rooms:** AES-256-GCM with a key derived from the room code using PBKDF2. Anyone who knows the room code can decrypt the room, so use your own private room code for sensitive conversations. The preset rooms use public codes.
 - **Direct chats:** ECDH P-256 key exchange plus AES-256-GCM. Only you and your friend hold the private keys, so the relay and other users cannot read the messages.
 - Your private keys (chat and wallet) stay on your phone, but they are included in exported backups so you can restore them. Backups are encrypted with a passphrase; the plain option is clearly marked unsafe. Keep backup files secret.

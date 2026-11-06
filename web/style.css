@@ -64,3 +64,228 @@ html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, -apple
   .cm-modal { align-items: center; }
   .cm-modal .cm-card { border-radius: 16px; }
 }
+
+/* ---------- v1.1 additions ---------- */
+.cm-topavatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--cm-border);
+  background: var(--cm-card);
+  flex-shrink: 0;
+}
+.cm-section-title {
+  font-weight: 700;
+  margin: 14px 2px 8px;
+  font-size: 13px;
+  letter-spacing: .02em;
+  color: var(--cm-muted);
+  text-transform: uppercase;
+}
+.cm-online {
+  font-size: 11px;
+  font-weight: 600;
+  color: #16a34a;
+  margin-left: 4px;
+}
+.cm-chip {
+  border: 1px solid var(--cm-border);
+  background: var(--cm-bg);
+  color: var(--cm-text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  min-height: 32px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cm-wprofile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.cm-wavatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--cm-border);
+  background: var(--cm-card);
+}
+.cm-wprofile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cm-wprofile-actions .cm-btn {
+  min-height: 38px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.cm-addrbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+.cm-addrbox code {
+  overflow-wrap: anywhere;
+}
+.cm-wbal {
+  margin: 12px 0;
+  border: 1px solid var(--cm-border);
+  border-radius: var(--cm-radius-sm);
+  overflow: hidden;
+}
+.cm-wchain {
+  border-bottom: 1px solid var(--cm-border);
+}
+.cm-wchain:last-child {
+  border-bottom: 0;
+}
+.cm-wchain-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  font-weight: 700;
+  background: var(--cm-bg);
+}
+.cm-wnet {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cm-muted);
+  border: 1px solid var(--cm-border);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.cm-wrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--cm-border);
+  font-size: 14px;
+}
+.cm-wsym {
+  font-weight: 600;
+}
+.cm-wval {
+  font-variant-numeric: tabular-nums;
+}
+.cm-wval.dim {
+  color: var(--cm-muted);
+}
+.cm-werror {
+  padding: 8px 12px;
+  color: var(--cm-danger);
+  font-size: 12px;
+  border-top: 1px solid var(--cm-border);
+}
+.cm-field {
+  margin: 10px 0;
+}
+.cm-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--cm-muted);
+  margin-bottom: 5px;
+}
+.cm-select {
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--cm-muted) 50%), linear-gradient(135deg, var(--cm-muted) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 34px;
+}
+.cm-token-card,
+.cm-airdrop-card {
+  margin: 4px 0;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,.14);
+  border: 1px solid rgba(255,255,255,.24);
+}
+.cm-bubble:not(.mine) .cm-token-card,
+.cm-bubble:not(.mine) .cm-airdrop-card {
+  background: var(--cm-bg);
+  border-color: var(--cm-border);
+}
+.cm-token-title {
+  font-weight: 700;
+}
+.cm-token-sub {
+  font-size: 12px;
+  opacity: .78;
+  margin-top: 2px;
+}
+.cm-linkbtn {
+  margin-top: 6px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-decoration: underline;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 0;
+  cursor: pointer;
+  min-height: 32px;
+}
+.cm-airdrop-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cm-airdrop-gift {
+  font-size: 26px;
+  line-height: 1;
+}
+.cm-airdrop-note {
+  font-size: 12px;
+  opacity: .8;
+  margin-top: 6px;
+}
+.cm-airdrop-btn {
+  margin-top: 10px;
+  width: 100%;
+}
+.cm-bubble-name {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: .72;
+  margin-bottom: 3px;
+}
+.cm-bubble.ai {
+  border-color: var(--cm-accent);
+}
+.cm-msg-meta {
+  font-size: 10px;
+  opacity: .7;
+  margin-top: 4px;
+  text-align: right;
+}
+.cm-msg-error {
+  font-size: 11px;
+  margin-top: 5px;
+  color: #fecaca;
+}
+.cm-bubble:not(.mine) .cm-msg-error {
+  color: var(--cm-danger);
+}
+.cm-msg-error .cm-linkbtn {
+  color: inherit;
+  margin: 0;
+}
+.cm-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
