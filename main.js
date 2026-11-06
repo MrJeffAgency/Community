@@ -21,7 +21,7 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.7.0";
+  var VERSION = "1.8.0";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -945,7 +945,7 @@
   var WALLET_REFRESH_MS = 30000;
   var MAX_WALLET_ARCHIVE = 20;
 
-  /* Token contracts. Community Chat now uses Celo only. G$ (GoodDollar)
+  /* Token contracts. Community Chat supports Celo and Thunder. G$ (GoodDollar)
      and the bridged BTC token use their official Celo contracts. */
   var GDOLLAR_CELO = "0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A";
   var USDT_TOKEN = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e";
@@ -955,6 +955,12 @@
   /* HDO token contract on Celo. Every user gets this by default; a user can
      override it in Wallet > Token settings. */
   var HDO_TOKEN_DEFAULT = "0x0b7e844Dd950558295eB5Ee7d5f57d18c1BEeb02";
+
+  /* ThunderCore bridged tokens (TT- prefix). */
+  var USDT_THUNDER = "0x4f3C8E20942461e2c3Bdd8311AC57B0c222f2b82";
+  var USDC_THUNDER = "0x22e89898A04eaf43379BeB70bf4E38b1faf8A31e";
+  var BTC_THUNDER = "0x18fB0A62f207A2a082cA60aA78F47a1af4985190";
+  var ETH_THUNDER = "0x6576Bb918709906DcbFDCeae4bB1e6df7C8a1077";
 
   var WALLET_CHAINS = [
     {
@@ -970,6 +976,20 @@
         { symbol: "USDC", address: USDC_CELO, decimals: 6 },
         { symbol: "HDO", address: HDO_TOKEN_DEFAULT, decimals: 18, custom: "hdo" },
         { symbol: "BTC", address: BTC_CELO, decimals: 8 }
+      ]
+    },
+    {
+      key: "thunder",
+      name: "Thunder",
+      chainId: 108,
+      native: { symbol: "TT", decimals: 18 },
+      rpcs: ["https://mainnet-rpc.thundercore.com", "https://mainnet-rpc.thundertoken.net", "https://mainnet-rpc.thundercore.io"],
+      explorer: "https://explorer-mainnet.thundercore.com/tx/",
+      tokens: [
+        { symbol: "USDT", address: USDT_THUNDER, decimals: 6 },
+        { symbol: "USDC", address: USDC_THUNDER, decimals: 6 },
+        { symbol: "BTC", address: BTC_THUNDER, decimals: 8 },
+        { symbol: "ETH", address: ETH_THUNDER, decimals: 18 }
       ]
     }
   ];
@@ -5562,6 +5582,11 @@
         assetSelect.appendChild(option);
       });
       if (tokenScope === "public") {
+        tokens.forEach(function (token) {
+          if (token.symbol === PUBLIC_ROOM_TOKEN) preferred = token.address;
+        });
+      }
+      if (post && delivery === "airdrop") {
         tokens.forEach(function (token) {
           if (token.symbol === PUBLIC_ROOM_TOKEN) preferred = token.address;
         });

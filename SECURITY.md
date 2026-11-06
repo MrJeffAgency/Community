@@ -22,6 +22,7 @@ Nothing is uploaded to a developer server. There is no account system, no analyt
 | `https://ntfy.envs.net`, `https://ntfy.sh` | Same as above (legacy default relays with a daily quota) | Only on builds before 1.6.1 |
 | `https://luckyai-blush.vercel.app/api/chat` | Only the text typed in the AI Room | When you ask Lucky AI a question |
 | `https://forno.celo.org`, `https://celo-rpc.publicnode.com` | Public wallet address reads and signed transactions | When loading balances or sending funds |
+| `https://mainnet-rpc.thundercore.com`, `https://mainnet-rpc.thundertoken.net`, `https://mainnet-rpc.thundercore.io` | Public wallet address reads and signed transactions on Thunder | When loading balances or sending funds on Thunder |
 | `https://celoscan.io` | Nothing (opened as a normal link) | When you tap a transaction link |
 | `https://github.com/MrJeffAgency/Community` | Nothing (opened as a normal link) | When you tap **Get unlimited relay** in Me |
 

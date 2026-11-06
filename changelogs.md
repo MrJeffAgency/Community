@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.0
+- Added **Thunder** (ThunderCore, chain ID 108) as a second supported network in the wallet, alongside Celo. Thunder uses TT as the native gas token; bridged USDT, USDC, BTC and ETH are supported. Public preset rooms stay HDO-only on Celo; private rooms and direct chats can send the new Thunder tokens too.
+- HDO remains the default token for airdrops and public-room sends.
+
 ## 1.7.0
 - **Admin-granted verified badges.** The developer profile (`CM-6S29-CA2X`) can now grant or remove a verified badge for any user from **People → Verified badge**. Grants are published to a public verified list on the relay and picked up by every client, so the badge shows for everyone. Badges are no longer limited to the hardcoded developer ID.
 - No other changes.

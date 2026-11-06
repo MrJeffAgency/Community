@@ -53,10 +53,10 @@ Tap a room chip in the **Chats** tab, or tap the room name in the top bar to ope
 4. Tap the photo button in the composer to send an image, or the coin button to send tokens — or create an airdrop — in a room or direct chat (not in the AI Room).
 5. In the **AI Room**, type a question and Lucky AI will reply.
 
-## Celo wallet
+## Wallet
 
 - A wallet is created automatically the first time you open v1.3.0 or newer (existing users included). The private key never leaves your phone.
-- Balances are read from public Celo RPC endpoints using only your address. Celo is the only supported network.
+- Balances are read from public Celo and Thunder RPC endpoints using only your address. Celo and Thunder are the supported networks.
 - Supported assets are **CELO** (native), **G$**, **USDT**, **USDC**, **HDO** and **BTC** (bridged WBTC on Celo).
 - G$ uses the official GoodDollar contract on Celo: `0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A` (18 decimals).
 - USDT uses `0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e` and USDC uses `0xcebA9300f2b948710d2653dD7B07f33A8B32118C` (both 6 decimals).
