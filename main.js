@@ -21,7 +21,7 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.6.1";
+  var VERSION = "1.7.0";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -37,6 +37,7 @@
      user, so this opens the setup guide instead. */
   var RELAY_GUIDE_URL = "https://github.com/MrJeffAgency/Community/tree/main/relay";
   var TOPIC_PREFIX = "acode-community-v1-";
+  var VERIFIED_TOPIC = TOPIC_PREFIX + "verified";
   var THREAD_ACTION_ID = PLUGIN_ID + ".thread";
   var AI_ENDPOINT = "https://luckyai-blush.vercel.app/api/chat?message=";
   var AI_ID = "CM-AI00-0000";
@@ -872,7 +873,10 @@
 
   function isVerifiedId(id) {
     var normalized = normalizeId(id);
-    return !!normalized && VERIFIED_IDS.indexOf(normalized) !== -1;
+    if (!normalized) return false;
+    if (VERIFIED_IDS.indexOf(normalized) !== -1) return true;
+    if (state && Array.isArray(state.verifiedIds) && state.verifiedIds.indexOf(normalized) !== -1) return true;
+    return false;
   }
 
   function verifiedBadgeHTML(id) {
@@ -1738,6 +1742,22 @@
       };
     }
 
+    var verifiedIds = [];
+    var verifiedInput = Array.isArray(input.verifiedIds) ? input.verifiedIds : [];
+    verifiedInput.forEach(function (value) {
+      var id = normalizeId(value);
+      if (id && verifiedIds.indexOf(id) === -1) verifiedIds.push(id);
+    });
+
+    var verifiedCursor = null;
+    var verifiedCursorInput = input.verifiedCursor && typeof input.verifiedCursor === "object" ? input.verifiedCursor : null;
+    if (verifiedCursorInput && (verifiedCursorInput.id || verifiedCursorInput.ts)) {
+      verifiedCursor = {
+        id: typeof verifiedCursorInput.id === "string" ? verifiedCursorInput.id.slice(0, 80) : "",
+        ts: Number(verifiedCursorInput.ts) || 0
+      };
+    }
+
     var cursors = {};
     var cursorsInput = input.cursors && typeof input.cursors === "object" ? input.cursors : {};
     Object.keys(cursorsInput).forEach(function (key) {
@@ -1773,6 +1793,8 @@
       threads: threads,
       cursors: cursors,
       dmCursor: dmCursor,
+      verifiedIds: verifiedIds,
+      verifiedCursor: verifiedCursor,
       crypto: cryptoState,
       wallet: wallet,
       walletArchive: walletArchive,
@@ -2115,6 +2137,54 @@
     });
   }
 
+  function publishVerifiedGrant(target) {
+    var id = normalizeId(target);
+    if (!id) return Promise.resolve(false);
+    var envelope = {
+      app: APP_TAG,
+      v: ENVELOPE_VERSION,
+      id: uid(),
+      from: state.user.id,
+      type: "verify-grant",
+      target: id,
+      ts: Date.now()
+    };
+    return publish(envelope, VERIFIED_TOPIC).then(function () {
+      if (!state.verifiedIds) state.verifiedIds = [];
+      if (state.verifiedIds.indexOf(id) === -1) state.verifiedIds.push(id);
+      saveState();
+      render();
+      return true;
+    }, function () {
+      return false;
+    });
+  }
+
+  function publishVerifiedRevoke(target) {
+    var id = normalizeId(target);
+    if (!id) return Promise.resolve(false);
+    var envelope = {
+      app: APP_TAG,
+      v: ENVELOPE_VERSION,
+      id: uid(),
+      from: state.user.id,
+      type: "verify-revoke",
+      target: id,
+      ts: Date.now()
+    };
+    return publish(envelope, VERIFIED_TOPIC).then(function () {
+      if (state.verifiedIds) {
+        var index = state.verifiedIds.indexOf(id);
+        if (index !== -1) state.verifiedIds.splice(index, 1);
+      }
+      saveState();
+      render();
+      return true;
+    }, function () {
+      return false;
+    });
+  }
+
   function setStatus(status, error) {
     ui.status = status;
     if (status === "online") {
@@ -2229,6 +2299,75 @@
       });
   }
 
+  function pollVerified() {
+    if (!running || !state) return Promise.resolve();
+    var base = relayBase();
+    var cursor = state.verifiedCursor || null;
+    var url = base + "/" + encodeURIComponent(VERIFIED_TOPIC) +
+      "/json?poll=1&limit=200&since=" + encodeURIComponent(sinceValue(cursor));
+
+    return fetchWithTimeout(url, { cache: "no-store" }, 15000)
+      .then(function (response) {
+        if (!response.ok) throw new Error("Relay returned HTTP " + response.status);
+        return response.text();
+      })
+      .then(function (text) {
+        if (!running || !state) return;
+        var nextCursor = null;
+        var lines = String(text || "").split("\n");
+        var changed = false;
+        for (var i = 0; i < lines.length; i += 1) {
+          var line = lines[i].trim();
+          if (!line) continue;
+          var item;
+          try {
+            item = JSON.parse(line);
+          } catch (e) {
+            continue;
+          }
+          if (!item || item.event !== "message") continue;
+          if (item.id) {
+            nextCursor = {
+              id: String(item.id).slice(0, 80),
+              ts: Number(item.time) || Math.floor(Date.now() / 1000)
+            };
+          }
+
+          var envelope = parseEnvelopeText(item.message);
+          if (!envelope || envelope.app !== APP_TAG || Number(envelope.v) !== ENVELOPE_VERSION) continue;
+          if (normalizeId(envelope.from) !== DEV_ID) continue;
+
+          var target = normalizeId(envelope.target);
+          if (!target) continue;
+          if (!state.verifiedIds) state.verifiedIds = [];
+
+          if (envelope.type === "verify-grant") {
+            if (state.verifiedIds.indexOf(target) === -1) {
+              state.verifiedIds.push(target);
+              changed = true;
+            }
+          } else if (envelope.type === "verify-revoke") {
+            var index = state.verifiedIds.indexOf(target);
+            if (index !== -1) {
+              state.verifiedIds.splice(index, 1);
+              changed = true;
+            }
+          }
+        }
+
+        if (nextCursor) {
+          state.verifiedCursor = nextCursor;
+          saveState();
+        } else if (changed) {
+          saveState();
+        }
+        if (changed && $root) render();
+      })
+      .catch(function () {
+        /* Ignore verified-list sync errors; they are retried next poll. */
+      });
+  }
+
   function pollNow() {
     if (!running || !state || pollInFlight) return Promise.resolve();
     pollInFlight = true;
@@ -2283,7 +2422,9 @@
       throw error;
     });
 
-    return Promise.all([roomPoll, dmPoll])
+    var verifiedPoll = pollVerified();
+
+    return Promise.all([roomPoll, dmPoll, verifiedPoll])
       .then(function () {
         if (running) setStatus("online");
       })
@@ -3813,13 +3954,24 @@
         "<summary>Verified badge</summary>" +
         '<p>A blue check marks a verified profile. ' +
           (state.user.id === DEV_ID
-            ? "Your developer profile is verified."
+            ? "Your developer profile is verified. You can grant or remove the badge for other profiles below."
             : "If you need a verified badge, message the developer at <code>" + escapeHTML(DEV_ID) +
               "</code>. Include your profile ID <code>" + escapeHTML(state.user.id) +
               "</code> in the message.") +
         "</p>" +
         (state.user.id === DEV_ID
-          ? ""
+          ? '<label class="cm-label" for="cm-verify-target">Profile ID to verify</label>' +
+            '<div class="cm-inline">' +
+              '<input class="cm-input" id="cm-verify-target" data-role="verifytarget" type="text" placeholder="CM-XXXX-XXXX" spellcheck="false">' +
+              '<button type="button" class="cm-btn primary" data-action="grant-verified">Grant</button>' +
+            "</div>" +
+            (state.verifiedIds && state.verifiedIds.length
+              ? '<p class="cm-muted">Verified by you:</p><div class="cm-button-row">' +
+                state.verifiedIds.map(function (id) {
+                  return '<button type="button" class="cm-btn danger" data-action="revoke-verified" data-id="' + escapeHTML(id) + '">Remove ' + escapeHTML(id) + "</button>";
+                }).join("") +
+                "</div>"
+              : '<p class="cm-muted">No profiles verified yet.</p>')
           : '<div class="cm-button-row"><button type="button" class="cm-btn primary" data-action="message-dev">Message the developer</button></div>') +
       "</details>";
   }
@@ -4165,7 +4317,10 @@
       saveRoom();
     } else if (action === "save-relay") {
       saveRelay();
-    } else if (action === "test-relay") {
+    } else if (action === "grant-verified") {
+      grantVerified();
+    } else if (action === "revoke-verified") {
+      revokeVerified(target.dataset.id);
       testRelay();
     } else if (action === "copy-relay") {
       copyRelay();
@@ -4672,6 +4827,34 @@
     render();
     pollNow();
     toastMsg("Relay reset to " + DEFAULT_RELAY);
+  }
+
+  function grantVerified() {
+    if (!state || state.user.id !== DEV_ID) return;
+    var input = $root ? $root.querySelector('[data-role="verifytarget"]') : null;
+    var id = normalizeId(input ? input.value : "");
+    if (!id) {
+      toastMsg("Enter a valid profile ID like CM-ABCD-1234");
+      if (input) input.focus();
+      return;
+    }
+    if (id === DEV_ID) {
+      toastMsg("The developer profile is already verified");
+      return;
+    }
+    publishVerifiedGrant(id).then(function (ok) {
+      if (input) input.value = "";
+      toastMsg(ok ? "Verified badge granted to " + id : "Could not grant the badge. Check the relay connection.");
+    });
+  }
+
+  function revokeVerified(id) {
+    if (!state || state.user.id !== DEV_ID) return;
+    var normalized = normalizeId(id);
+    if (!normalized) return;
+    publishVerifiedRevoke(normalized).then(function (ok) {
+      toastMsg(ok ? "Verified badge removed from " + normalized : "Could not remove the badge. Check the relay connection.");
+    });
   }
 
   /* ------------------------------------------------------------------ *

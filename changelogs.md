@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.0
+- **Admin-granted verified badges.** The developer profile (`CM-6S29-CA2X`) can now grant or remove a verified badge for any user from **People → Verified badge**. Grants are published to a public verified list on the relay and picked up by every client, so the badge shows for everyone. Badges are no longer limited to the hardcoded developer ID.
+- No other changes.
+
 ## 1.6.1
 - The default relay is now the community relay at `https://community-relay.hdo-box.workers.dev`, which has no daily message limit. Existing installs that were still on `ntfy.sh` or `ntfy.envs.net` are migrated to it once. A relay you entered yourself is kept.
 - New installs no longer need to change any setting to avoid the daily quota.
