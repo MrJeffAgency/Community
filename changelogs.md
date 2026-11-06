@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.0
+- Replaced the dead Thunder network with **BSC** (Binance Smart Chain, chain ID 56) in the wallet. BSC uses BNB as the native gas token; bridged USDT, USDC, BTC and ETH are supported.
+- Added a **profile picture** to the wallet. Set it from a photo, or look up an NFT on-chain (paste a contract address and token ID; the plugin fetches the token URI and metadata). If none is set, a common default avatar is used.
+
 ## 1.8.0
 - Added **Thunder** (ThunderCore, chain ID 108) as a second supported network in the wallet, alongside Celo. Thunder uses TT as the native gas token; bridged USDT, USDC, BTC and ETH are supported. Public preset rooms stay HDO-only on Celo; private rooms and direct chats can send the new Thunder tokens too.
 - HDO remains the default token for airdrops and public-room sends.

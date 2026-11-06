@@ -1570,6 +1570,27 @@
   font-size: 12.5px;
 }
 
+.cm-wprofile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.cm-wavatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--cm-border);
+  background: var(--cm-card);
+}
+.cm-wprofile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .cm-wchain {
   border-bottom: 1px solid var(--cm-border);
 }

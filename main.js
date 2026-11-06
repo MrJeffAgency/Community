@@ -21,7 +21,7 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.8.0";
+  var VERSION = "1.9.0";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -38,6 +38,12 @@
   var RELAY_GUIDE_URL = "https://github.com/MrJeffAgency/Community/tree/main/relay";
   var TOPIC_PREFIX = "acode-community-v1-";
   var VERIFIED_TOPIC = TOPIC_PREFIX + "verified";
+  var DEFAULT_PROFILE_IMAGE = "data:image/svg+xml;utf8," + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">' +
+    '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5b4bdb"/><stop offset="1" stop-color="#a855f7"/></linearGradient></defs>' +
+    '<rect width="96" height="96" rx="48" fill="url(#g)"/>' +
+    '<text x="48" y="62" font-size="46" text-anchor="middle" fill="white">👤</text></svg>'
+  );
   var THREAD_ACTION_ID = PLUGIN_ID + ".thread";
   var AI_ENDPOINT = "https://luckyai-blush.vercel.app/api/chat?message=";
   var AI_ID = "CM-AI00-0000";
@@ -945,7 +951,7 @@
   var WALLET_REFRESH_MS = 30000;
   var MAX_WALLET_ARCHIVE = 20;
 
-  /* Token contracts. Community Chat supports Celo and Thunder. G$ (GoodDollar)
+  /* Token contracts. Community Chat supports Celo and BSC. G$ (GoodDollar)
      and the bridged BTC token use their official Celo contracts. */
   var GDOLLAR_CELO = "0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A";
   var USDT_TOKEN = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e";
@@ -956,11 +962,11 @@
      override it in Wallet > Token settings. */
   var HDO_TOKEN_DEFAULT = "0x0b7e844Dd950558295eB5Ee7d5f57d18c1BEeb02";
 
-  /* ThunderCore bridged tokens (TT- prefix). */
-  var USDT_THUNDER = "0x4f3C8E20942461e2c3Bdd8311AC57B0c222f2b82";
-  var USDC_THUNDER = "0x22e89898A04eaf43379BeB70bf4E38b1faf8A31e";
-  var BTC_THUNDER = "0x18fB0A62f207A2a082cA60aA78F47a1af4985190";
-  var ETH_THUNDER = "0x6576Bb918709906DcbFDCeae4bB1e6df7C8a1077";
+  /* Binance Smart Chain tokens. */
+  var USDT_BSC = "0x55d398326f99059fF775485246999027B3197955";
+  var USDC_BSC = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d";
+  var BTC_BSC = "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c";
+  var ETH_BSC = "0x2170Ed0880ac9A755fd29B2688956BD959F933F8";
 
   var WALLET_CHAINS = [
     {
@@ -979,17 +985,17 @@
       ]
     },
     {
-      key: "thunder",
-      name: "Thunder",
-      chainId: 108,
-      native: { symbol: "TT", decimals: 18 },
-      rpcs: ["https://mainnet-rpc.thundercore.com", "https://mainnet-rpc.thundertoken.net", "https://mainnet-rpc.thundercore.io"],
-      explorer: "https://explorer-mainnet.thundercore.com/tx/",
+      key: "bsc",
+      name: "BSC",
+      chainId: 56,
+      native: { symbol: "BNB", decimals: 18 },
+      rpcs: ["https://bsc-dataseed.binance.org", "https://bsc-dataseed1.defibit.io", "https://bsc-dataseed1.ninicoin.io"],
+      explorer: "https://bscscan.com/tx/",
       tokens: [
-        { symbol: "USDT", address: USDT_THUNDER, decimals: 6 },
-        { symbol: "USDC", address: USDC_THUNDER, decimals: 6 },
-        { symbol: "BTC", address: BTC_THUNDER, decimals: 8 },
-        { symbol: "ETH", address: ETH_THUNDER, decimals: 18 }
+        { symbol: "USDT", address: USDT_BSC, decimals: 18 },
+        { symbol: "USDC", address: USDC_BSC, decimals: 18 },
+        { symbol: "BTC", address: BTC_BSC, decimals: 18 },
+        { symbol: "ETH", address: ETH_BSC, decimals: 18 }
       ]
     }
   ];
@@ -1753,6 +1759,8 @@
       };
     });
 
+    var profileImage = typeof input.profileImage === "string" ? input.profileImage.slice(0, 200000) : "";
+
     var dmCursor = null;
     var dmInput = input.dmCursor && typeof input.dmCursor === "object" ? input.dmCursor : null;
     if (dmInput && (dmInput.id || dmInput.ts)) {
@@ -1813,6 +1821,7 @@
       threads: threads,
       cursors: cursors,
       dmCursor: dmCursor,
+      profileImage: profileImage,
       verifiedIds: verifiedIds,
       verifiedCursor: verifiedCursor,
       crypto: cryptoState,
@@ -4337,7 +4346,12 @@
       saveRoom();
     } else if (action === "save-relay") {
       saveRelay();
-    } else if (action === "grant-verified") {
+    } else if (action === "set-profile-picture") {
+      setProfilePictureFromFile();
+    } else if (action === "set-profile-nft") {
+      setProfilePictureFromNft();
+    } else if (action === "reset-profile-picture") {
+      resetProfilePicture();
       grantVerified();
     } else if (action === "revoke-verified") {
       revokeVerified(target.dataset.id);
@@ -4849,6 +4863,127 @@
     toastMsg("Relay reset to " + DEFAULT_RELAY);
   }
 
+  function profileImageURL() {
+    if (state && typeof state.profileImage === "string" && state.profileImage) return state.profileImage;
+    return DEFAULT_PROFILE_IMAGE;
+  }
+
+  function fetchNftTokenUri(contract, tokenId, chainKey) {
+    var chain = walletChainByKey(chainKey || "celo");
+    if (!chain) return Promise.reject(new Error("Unknown network"));
+    var idHex = "";
+    try {
+      idHex = wBI(tokenId).toString(16);
+    } catch (e) {
+      return Promise.reject(new Error("Invalid token ID"));
+    }
+    while (idHex.length < 64) idHex = "0" + idHex;
+    var data = "0xc87b56dd" + idHex;
+    return rpcCall([{ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: contract, data: data }, "latest"] }], chain.rpcs)
+      .then(function (res) {
+        if (!res || !res[1] || res[1].error || typeof res[1].result !== "string") {
+          throw new Error("The contract did not return a token URI");
+        }
+        var uri = decodeAbiString(res[1].result);
+        if (!uri) throw new Error("Empty token URI");
+        return uri;
+      });
+  }
+
+  function fetchNftImageFromUri(uri) {
+    if (!uri) return Promise.reject(new Error("No token URI"));
+    if (uri.indexOf("data:application/json") === 0) {
+      try {
+        var comma = uri.indexOf(",");
+        var jsonText = comma >= 0 ? uri.slice(comma + 1) : "";
+        if (/;base64/i.test(uri.slice(0, comma))) jsonText = atob(jsonText);
+        var meta = JSON.parse(jsonText);
+        var img = meta && (meta.image || meta.image_url || meta.animation_url);
+        if (!img) throw new Error("No image in metadata");
+        return Promise.resolve(normalizeNftImageUrl(img));
+      } catch (e) {
+        return Promise.reject(new Error("Could not read the NFT metadata"));
+      }
+    }
+    var url = normalizeNftImageUrl(uri);
+    if (/\.(png|jpe?g|gif|webp|svg)(\?|#|$)/i.test(url)) return Promise.resolve(url);
+    return fetchWithTimeout(url, { cache: "no-store" }, 15000)
+      .then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.json();
+      })
+      .then(function (meta) {
+        var img = meta && (meta.image || meta.image_url || meta.animation_url);
+        if (!img) throw new Error("No image in metadata");
+        return normalizeNftImageUrl(img);
+      });
+  }
+
+  function normalizeNftImageUrl(value) {
+    var url = String(value || "").trim();
+    if (url.indexOf("ipfs://") === 0) url = "https://ipfs.io/ipfs/" + url.slice(7);
+    if (url.indexOf("ipfs/") === 0) url = "https://ipfs.io/" + url;
+    return url;
+  }
+
+  function fetchNftImage(contract, tokenId, chainKey) {
+    return fetchNftTokenUri(contract, tokenId, chainKey).then(function (uri) {
+      return fetchNftImageFromUri(uri);
+    });
+  }
+
+  function setProfilePictureFromFile() {
+    if (!state) return;
+    var input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.style.display = "none";
+    document.body.appendChild(input);
+    input.onchange = function () {
+      var file = input.files && input.files[0];
+      input.remove();
+      if (!file) return;
+      readFileAsDataURL(file).then(compressImage).then(function (dataUrl) {
+        if (!state) return;
+        state.profileImage = dataUrl;
+        saveState();
+        render();
+        toastMsg("Profile picture updated");
+      }).catch(function (error) {
+        toastMsg(error && error.message ? error.message : "Could not set the picture");
+      });
+    };
+    input.click();
+  }
+
+  function setProfilePictureFromNft() {
+    if (!state) return;
+    var contract = window.prompt("NFT contract address (0x…)");
+    if (!contract) return;
+    var tokenId = window.prompt("Token ID");
+    if (tokenId == null || !String(tokenId).trim()) return;
+    toastMsg("Looking up NFT…", 2000);
+    fetchNftImage(contract.trim(), String(tokenId).trim(), (currentChain() && currentChain().key) || "celo")
+      .then(function (url) {
+        if (!state) return;
+        state.profileImage = url;
+        saveState();
+        render();
+        toastMsg("Profile picture updated from NFT");
+      })
+      .catch(function (error) {
+        toastMsg("Could not load that NFT: " + (error && error.message ? error.message : String(error)));
+      });
+  }
+
+  function resetProfilePicture() {
+    if (!state) return;
+    state.profileImage = "";
+    saveState();
+    render();
+    toastMsg("Using the default profile picture");
+  }
+
   function grantVerified() {
     if (!state || state.user.id !== DEV_ID) return;
     var input = $root ? $root.querySelector('[data-role="verifytarget"]') : null;
@@ -5214,6 +5349,15 @@
     var w = ui.wallet;
     var d = w.data;
     var html = "";
+
+    html += '<div class="cm-wprofile">' +
+      '<img class="cm-wavatar" src="' + escapeHTML(profileImageURL()) + '" alt="Profile picture">' +
+      '<div class="cm-wprofile-actions">' +
+        '<button type="button" class="cm-btn" data-action="set-profile-picture">Set picture</button>' +
+        '<button type="button" class="cm-btn" data-action="set-profile-nft">Set NFT</button>' +
+        '<button type="button" class="cm-btn" data-action="reset-profile-picture">Use default</button>' +
+      '</div>' +
+    '</div>';
 
     WALLET_CHAINS.forEach(function (chain) {
       var entry = null;
