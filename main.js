@@ -21,7 +21,7 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.5.1";
+  var VERSION = "1.5.2";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -2890,10 +2890,16 @@
   function rootTemplate() {
     return '' +
       '<div class="cm-statusbar" data-role="statusbar">' +
-        '<span class="cm-dot connecting" data-role="dot"></span>' +
-        '<span class="cm-statustext" data-role="statustext">Connecting…</span>' +
-        '<button type="button" class="cm-room" data-action="open-room" title="Change room" data-role="room">#general</button>' +
-        '<button type="button" class="cm-iconbtn" data-action="sync" title="Sync now" aria-label="Sync now"><span class="icon refresh"></span></button>' +
+        '<button type="button" class="cm-roomselector" data-action="open-room" title="Change room" aria-label="Change room">' +
+          '<span class="cm-room-emoji" data-role="roomemoji">💬</span>' +
+          '<span class="cm-room-name" data-role="roomname">General</span>' +
+          '<span class="cm-caret" aria-hidden="true">▾</span>' +
+        '</button>' +
+        '<span class="cm-conn" aria-live="polite">' +
+          '<span class="cm-dot connecting" data-role="dot"></span>' +
+          '<span class="cm-statustext" data-role="statustext">Connecting…</span>' +
+        '</span>' +
+        '<button type="button" class="cm-iconbtn" data-action="sync" title="Check for new messages" aria-label="Check for new messages"><span class="icon refresh"></span></button>' +
       '</div>' +
       '<div class="cm-threadbar" data-role="threadbar" hidden>' +
         '<button type="button" class="cm-iconbtn" data-action="back" title="Back" aria-label="Back"><span class="icon arrow_back"></span></button>' +
@@ -2905,22 +2911,22 @@
         '<button type="button" class="cm-iconbtn" data-action="thread-menu" title="Chat options" aria-label="Chat options"><span class="icon more_vert"></span></button>' +
       '</div>' +
       '<div class="cm-view" data-role="view"></div>' +
-      '<div class="cm-tabs" data-role="tabs">' +
-        '<button type="button" class="cm-tab active" data-action="tab" data-tab="chats">' +
+      '<div class="cm-tabs" data-role="tabs" role="tablist" aria-label="Community sections">' +
+        '<button type="button" class="cm-tab active" data-action="tab" data-tab="chats" role="tab" aria-selected="true">' +
           '<span class="icon chat_bubble"></span><span>Chats</span>' +
           '<i class="cm-badge" data-role="unread" hidden>0</i>' +
         '</button>' +
-        '<button type="button" class="cm-tab" data-action="tab" data-tab="people">' +
+        '<button type="button" class="cm-tab" data-action="tab" data-tab="people" role="tab" aria-selected="false">' +
           '<span class="icon account_box"></span><span>People</span>' +
         '</button>' +
-        '<button type="button" class="cm-tab" data-action="tab" data-tab="me">' +
+        '<button type="button" class="cm-tab" data-action="tab" data-tab="me" role="tab" aria-selected="false">' +
           '<span class="icon person"></span><span>Me</span>' +
         '</button>' +
       '</div>' +
       '<div class="cm-composer" data-role="composer" hidden>' +
         '<input type="file" class="cm-fileinput" data-role="imagefile" accept="image/*" aria-hidden="true" tabindex="-1">' +
         '<div class="cm-composewrap">' +
-          '<button type="button" class="cm-attach cm-coinbtn" data-action="send-token" title="Send tokens" aria-label="Send tokens"><span class="cm-coinico">🪙</span></button>' +
+          '<button type="button" class="cm-attach" data-action="send-token" title="Send tokens" aria-label="Send tokens"><span class="icon monetization_on"></span></button>' +
           '<button type="button" class="cm-attach" data-action="pick-image" title="Send a photo" aria-label="Send a photo"><span class="icon image"></span></button>' +
           '<textarea class="cm-input" data-role="input" rows="1" maxlength="1200" placeholder="Message…" enterkeyhint="send" aria-label="Message"></textarea>' +
           '<button type="button" class="cm-send" data-action="send" title="Send" aria-label="Send"><span class="icon send"></span></button>' +
@@ -2934,6 +2940,9 @@
 
   function ensureUI() {
     if ($root || !pageRef) return;
+    if (pageRef.classList && typeof pageRef.classList.add === "function") {
+      pageRef.classList.add("cm-page");
+    }
     $root = document.createElement("div");
     $root.className = "cm-app";
     $root.innerHTML = rootTemplate();
@@ -2941,10 +2950,11 @@
     if (typeof pageRef.settitle === "function") pageRef.settitle("Community");
 
     var tail = document.createElement("span");
-    tail.className = "icon more_vert";
+    tail.className = "icon settings";
     tail.title = "Community settings";
     tail.setAttribute("role", "button");
     tail.setAttribute("aria-label", "Community settings");
+    tail.setAttribute("tabindex", "0");
     /* Acode header tiles disable pointer events on children unless they
        declare a data-action attribute. Without this the titlebar button
        looks fine but cannot be tapped. */
@@ -3016,26 +3026,31 @@
     if (!$root || !state) return;
     var dot = $root.querySelector('[data-role="dot"]');
     var text = $root.querySelector('[data-role="statustext"]');
-    var room = $root.querySelector('[data-role="room"]');
+    var roomName = $root.querySelector('[data-role="roomname"]');
+    var roomEmoji = $root.querySelector('[data-role="roomemoji"]');
     if (dot) {
       dot.className = "cm-dot " + (ui.status === "online" ? "online" : ui.status === "offline" ? "offline" : "connecting");
     }
     if (text) {
       if (ui.status === "online") {
-        text.textContent = "Online · synced " + relativeTime(ui.lastSync || Date.now());
-        text.title = "";
+        text.textContent = "Online";
+        text.title = "Synced " + relativeTime(ui.lastSync || Date.now());
       } else if (ui.status === "offline") {
-        text.textContent = "Offline · saved on this phone";
-        text.title = ui.lastError || "";
+        text.textContent = "Offline";
+        text.title = (ui.lastError ? ui.lastError + ". " : "") +
+          "Messages are saved on this phone.";
       } else {
         text.textContent = "Connecting…";
         text.title = "";
       }
     }
-    if (room) {
-      var info = roomInfo(state.settings.room);
-      room.textContent = info.emoji + " " + info.name;
-      room.title = "Change room";
+    var info = roomInfo(state.settings.room);
+    if (roomName) roomName.textContent = info.name;
+    if (roomEmoji) roomEmoji.textContent = info.emoji;
+    var selector = $root.querySelector('[data-action="open-room"]');
+    if (selector) {
+      selector.title = "Room: " + info.emoji + " " + info.name + " · tap to change";
+      selector.setAttribute("aria-label", "Room: " + info.name + ". Tap to change room.");
     }
   }
 
@@ -3044,7 +3059,9 @@
     var tabs = $root.querySelectorAll("[data-action=\"tab\"]");
     for (var i = 0; i < tabs.length; i += 1) {
       var tab = tabs[i];
-      tab.classList.toggle("active", ui.mode !== "thread" && tab.dataset.tab === ui.tab);
+      var active = ui.mode !== "thread" && tab.dataset.tab === ui.tab;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", active ? "true" : "false");
     }
     var badge = $root.querySelector('[data-role="unread"]');
     if (badge) {
@@ -3073,16 +3090,16 @@
       if (sub) {
         if (isAiRoom()) {
           sub.innerHTML = '<span class="cm-dot online"></span>' +
-            (ui.aiBusy ? "Lucky AI is typing…" : "Lucky AI · private to this phone");
+            (ui.aiBusy ? "Lucky AI is typing…" : "Lucky AI assistant");
         } else {
           var online = onlineCount();
-          sub.innerHTML = '<span class="cm-dot online"></span>#' + escapeHTML(slugFor(state.settings.room)) +
-            " · " + (online ? online + " online" : "no one else online yet") +
-            (cryptoAvailable()
-              ? (ROOMS.some(function (r) { return r.slug === slugFor(state.settings.room); })
-                ? " · 🔒 encrypted · public room"
-                : " · 🔒 encrypted")
-              : " · ⚠ encryption unavailable");
+          var slug = slugFor(state.settings.room);
+          sub.innerHTML = '<span class="cm-dot online"></span>#' + escapeHTML(slug) +
+            " · " + (online ? online + " online" : "no one else online yet");
+          var preset = ROOMS.some(function (r) { return r.slug === slug; });
+          sub.title = cryptoAvailable()
+            ? (preset ? "Encrypted. This is a public room code." : "Encrypted private room.")
+            : "Encryption is unavailable on this device.";
         }
       }
       return;
@@ -3097,10 +3114,12 @@
     if (sub) {
       var onlineNow = isOnline(contact);
       sub.innerHTML = (onlineNow
-        ? '<span class="cm-dot online"></span>online · '
-        : '<span class="cm-dot"></span>offline · ') +
-        (cryptoAvailable() ? "🔒 encrypted · " : "⚠ unencrypted · ") +
-        escapeHTML(ui.peer);
+        ? '<span class="cm-dot online"></span>online'
+        : '<span class="cm-dot"></span>offline') +
+        " · " + escapeHTML(ui.peer);
+      sub.title = cryptoAvailable()
+        ? "Encrypted direct chat"
+        : "Encryption is unavailable on this device.";
     }
 
   }
@@ -3115,6 +3134,7 @@
     var hint = $root.querySelector('[data-role="hint"]');
     if (!input) return;
 
+    var ai = ui.mode === "thread" && ui.peer === "community" && isAiRoom();
     if (ui.mode === "thread" && ui.peer) {
       if (ui.peer === "community") {
         input.placeholder = isAiRoom()
@@ -3129,32 +3149,26 @@
     }
 
     if (hint) {
-      if (ui.mode === "thread" && ui.peer === "community" && isAiRoom()) {
-        hint.textContent = "Lucky AI replies here · stays on this phone";
+      if (ai) {
+        hint.textContent = "Lucky AI · your question is sent to the AI service";
       } else if (ui.mode === "thread" && ui.peer === "community") {
         hint.textContent = cryptoAvailable()
-          ? "🔒 End-to-end encrypted · everyone with this room code can read it"
-          : "⚠ Encryption unavailable on this device";
+          ? "🔒 Encrypted · everyone in this room can read it"
+          : "⚠ Encryption unavailable — sending disabled";
       } else if (ui.mode === "thread") {
         hint.textContent = cryptoAvailable()
-          ? "🔒 End-to-end encrypted · only this friend can read it"
-          : "⚠ Encryption unavailable on this device";
+          ? "🔒 Encrypted · only this friend can read it"
+          : "⚠ Encryption unavailable — sending disabled";
       } else {
-        hint.textContent = "Tap send to post";
+        hint.textContent = "";
       }
     }
 
-    if (attach) {
-      attach.disabled = !(ui.mode === "thread" && ui.peer) ||
-        (ui.peer === "community" && isAiRoom());
-    }
-    if (coin) {
-      coin.disabled = !(ui.mode === "thread" && ui.peer) ||
-        (ui.peer === "community" && isAiRoom());
-      coin.title = coin.disabled
-        ? "Tokens are not available in the AI Room"
-        : "Send tokens";
-    }
+    /* Photos and tokens do not exist in the AI Room. Hide the buttons rather
+       than showing disabled controls the user cannot explain. */
+    if (attach) attach.hidden = ai;
+    if (coin) coin.hidden = ai;
+    if (coin) coin.title = "Send tokens";
 
     var length = String(input.value || "").length;
     if (send) send.disabled = !String(input.value || "").trim();
@@ -3182,7 +3196,7 @@
     html += roomsHTML();
 
     var community = getThread("community", true);
-    html += '<div class="cm-section-title">Your rooms <span>' +
+    html += '<div class="cm-section-title">Current room <span>' +
       escapeHTML(roomInfo(state.settings.room).name) + "</span></div>";
     html += threadRowHTML("community", community);
 
@@ -3236,9 +3250,14 @@
       return;
     }
 
-    state.settings.room = target.slug;
+    enterRoom(target.slug, "Joined " + target.emoji + " " + target.name);
+  }
+
+  function enterRoom(room, message) {
+    if (!state) return;
+    state.settings.room = room;
     ensureCommunityThread();
-    if (target.slug === "ai") ensureAiWelcome(getThread("community", true));
+    if (isAiRoom()) ensureAiWelcome(getThread("community", true));
     ui.tab = "chats";
     ui.mode = "tabs";
     ui.peer = null;
@@ -3246,17 +3265,146 @@
     saveState();
     updateSidebar();
     pollNow();
-    toastMsg("Joined " + target.emoji + " " + target.name);
+    if (message) toastMsg(message);
     openThread("community");
+  }
+
+  function joinRoomCode(code) {
+    if (!state) return false;
+    var room = cleanRoom(code);
+    if (!room) {
+      toastMsg("Enter a room code, for example general");
+      return false;
+    }
+    if (room === roomSlug()) {
+      state.settings.room = room;
+      saveState();
+      render();
+      toastMsg("You are already in #" + room);
+      return true;
+    }
+    enterRoom(room, "Joined #" + room);
+    return true;
+  }
+
+  function openRoomsModal() {
+    if (!state) return;
+    var modal = openModal("Rooms");
+    var current = roomSlug();
+    var intro = cmEl("p", "cm-muted",
+      "Pick a public room or join a private one with a shared code.");
+    modal.body.appendChild(intro);
+
+    var list = cmEl("div", "cm-roomlist");
+    ROOMS.forEach(function (room) {
+      var active = room.slug === current;
+      var button = cmEl("button", "cm-roomoption" + (active ? " active" : ""));
+      button.type = "button";
+      button.innerHTML =
+        '<span class="cm-roomoption-emoji">' + escapeHTML(room.emoji) + "</span>" +
+        '<span class="cm-roomoption-main">' +
+          '<span class="cm-roomoption-name">' + escapeHTML(room.name) + "</span>" +
+          '<span class="cm-roomoption-desc">' + escapeHTML(room.desc) + "</span>" +
+        "</span>" +
+        (active ? '<span class="cm-roomoption-check" aria-hidden="true">✓</span>' : "");
+      button.setAttribute("aria-label", room.name + (active ? " (current room)" : ""));
+      button.onclick = function () {
+        modal.close();
+        joinRoom(room.slug);
+      };
+      list.appendChild(button);
+    });
+    modal.body.appendChild(list);
+
+    var label = cmEl("label", "cm-label", "Private room code");
+    label.setAttribute("for", "cm-room-code");
+    modal.body.appendChild(label);
+
+    var input = cmEl("input", "cm-input");
+    input.id = "cm-room-code";
+    input.type = "text";
+    input.maxLength = 32;
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.placeholder = "e.g. our-secret-room";
+    modal.body.appendChild(input);
+
+    var note = cmEl("p", "cm-muted",
+      "Use a hard-to-guess code for private chats. Everyone with the same code can read the room.");
+    modal.body.appendChild(note);
+
+    var cancel = cmEl("button", "cm-btn", "Cancel");
+    cancel.type = "button";
+    cancel.onclick = function () {
+      modal.close();
+    };
+
+    var join = cmEl("button", "cm-btn primary", "Join room");
+    join.type = "button";
+    join.onclick = function () {
+      if (joinRoomCode(input.value)) modal.close();
+    };
+
+    modal.actions.appendChild(cancel);
+    modal.actions.appendChild(join);
+  }
+
+  function roomMenu() {
+    if (!state) return;
+    var info = roomInfo(state.settings.room);
+    var slug = slugFor(state.settings.room);
+    var preset = ROOMS.some(function (room) { return room.slug === slug; });
+    var modal = openModal("Room options");
+
+    modal.body.innerHTML =
+      '<div class="cm-profile">' +
+        '<span class="cm-avatar cm-avatar-lg" style="--cm-avatar-bg:#6c5ce7">' + escapeHTML(info.emoji) + "</span>" +
+        '<div class="cm-profile-main">' +
+          '<div class="cm-profile-name">' + escapeHTML(info.name) + "</div>" +
+          '<div class="cm-profile-sub">#' + escapeHTML(slug) + "</div>" +
+        "</div>" +
+      "</div>" +
+      '<p>' + escapeHTML(info.desc) + "</p>" +
+      "<p>" + (preset
+        ? "This is a public room. Anyone who knows the room code can read it."
+        : "This is a private room. Only people with the same code can read it.") + "</p>" +
+      "<p>" + (cryptoAvailable()
+        ? "Messages are encrypted on this phone before they are sent."
+        : "Encryption is unavailable on this device, so sending is disabled.") + "</p>";
+
+    var change = cmEl("button", "cm-btn primary", "Change room");
+    change.type = "button";
+    change.onclick = function () {
+      modal.close();
+      openRoomsModal();
+    };
+
+    var copy = cmEl("button", "cm-btn", "Copy room code");
+    copy.type = "button";
+    copy.onclick = function () {
+      modal.close();
+      copyRoom();
+    };
+
+    var clear = cmEl("button", "cm-btn danger", "Clear chat");
+    clear.type = "button";
+    clear.onclick = function () {
+      modal.close();
+      confirmClearThread("community");
+    };
+
+    modal.actions.appendChild(copy);
+    modal.actions.appendChild(clear);
+    modal.actions.appendChild(change);
   }
 
   function welcomeHTML() {
     return '<div class="cm-welcome">' +
-      '<button type="button" class="cm-welcome-dismiss" data-action="dismiss-welcome" aria-label="Dismiss"><span class="icon clearclose"></span></button>' +
-      "<h2>Welcome to Community 👋</h2>" +
-      "<p>Your unique ID was created and saved on this phone. Share it with a friend who installed this plugin so you can chat directly.</p>" +
-      "<p>Pick a room above — tap <b>AI Room</b> to chat with Lucky AI, and use the photo button to share pictures in rooms or direct chats.</p>" +
-      "<p>🛡️ Private by design: chats and wallet keys stay on this phone. The relay only receives encrypted messages. No analytics, no ads, no remote code.</p>" +
+      '<button type="button" class="cm-welcome-dismiss" data-action="dismiss-welcome" aria-label="Dismiss welcome"><span class="icon clearclose"></span></button>' +
+      "<h2>Welcome to Community</h2>" +
+      "<p>Private, encrypted chat inside Acode. Your ID lives on this phone — share it so friends can message you directly.</p>" +
+      "<p>Pick a room below, or open <b>People</b> to add a friend.</p>" +
+      "<p>🛡️ No account, no ads, no tracking.</p>" +
       '<div class="cm-idbox"><code>' + escapeHTML(state.user.id) + "</code>" +
       '<button type="button" class="cm-chip" data-action="copy-id">Copy</button></div>' +
       '<div class="cm-welcome-actions">' +
@@ -3484,7 +3632,7 @@
     if (ui.peer === "community") {
       var info = roomInfo(state.settings.room);
       var extra = isAiRoom()
-        ? "Ask Lucky AI a question below — it replies here privately on this phone."
+        ? "Ask Lucky AI a question below. Your question is sent to the AI service; replies are stored only on this phone."
         : "No messages in this room yet. Say hello — anyone using this room will see it.";
       return '<div class="cm-thread-empty">' +
         '<span class="cm-avatar cm-avatar-lg" style="--cm-avatar-bg:#6c5ce7">' + info.emoji + "</span>" +
@@ -3532,10 +3680,10 @@
             '<div class="cm-profile-name">' + verifiedProfileNameHTML(state.user.id, state.user.name) + "</div>" +
             '<div class="cm-profile-sub">This is you</div>' +
           "</div>" +
-          '<button type="button" class="cm-chip" data-action="copy-id">Copy ID</button>' +
+          '<button type="button" class="cm-chip" data-action="copy-invite">Share invite</button>' +
         "</div>" +
-        '<div class="cm-idbox"><code>' + escapeHTML(state.user.id) + "</code></div>" +
-        '<p class="cm-card-p">Share your invite so a friend can add you. It includes your secure key so direct chats can be encrypted from the first message.</p>' +
+        '<div class="cm-idbox"><code>' + escapeHTML(state.user.id) + "</code>" +
+          '<button type="button" class="cm-chip" data-action="copy-id">Copy</button></div>' +
       "</div>" +
 
       '<div class="cm-card">' +
@@ -3549,22 +3697,22 @@
         "</form>" +
       "</div>" +
 
-      '<div class="cm-card">' +
-        "<h3>Verified badge</h3>" +
-        '<p class="cm-card-p">A blue check marks a verified profile. ' +
+      '<div class="cm-section-title">People you know <span>' + contacts.length + "</span></div>" +
+      '<div class="cm-list">' + list + "</div>" +
+
+      '<details class="cm-card" style="margin-top:14px">' +
+        "<summary>Verified badge</summary>" +
+        '<p>A blue check marks a verified profile. ' +
           (state.user.id === DEV_ID
             ? "Your developer profile is verified."
             : "If you need a verified badge, message the developer at <code>" + escapeHTML(DEV_ID) +
               "</code>. Include your profile ID <code>" + escapeHTML(state.user.id) +
-              "</code> in the message so the developer can find you.") +
+              "</code> in the message.") +
         "</p>" +
         (state.user.id === DEV_ID
           ? ""
           : '<div class="cm-button-row"><button type="button" class="cm-btn primary" data-action="message-dev">Message the developer</button></div>') +
-      "</div>" +
-
-      '<div class="cm-section-title">People you know <span>' + contacts.length + "</span></div>" +
-      '<div class="cm-list">' + list + "</div>";
+      "</details>";
   }
 
   function contactRowHTML(contact) {
@@ -3585,10 +3733,8 @@
         '<span class="cm-rowpreview">' + escapeHTML(sub) + " · " + escapeHTML(contact.id) + "</span>" +
       "</span>" +
       '<span class="cm-rowactions">' +
-        '<button type="button" class="cm-iconbtn" data-action="open-thread" data-peer="' +
-          escapeHTML(contact.id) + '" title="Chat"><span class="icon chat_bubble"></span></button>' +
         '<button type="button" class="cm-iconbtn" data-action="remove-contact" data-id="' +
-          escapeHTML(contact.id) + '" title="Remove contact"><span class="icon delete"></span></button>' +
+          escapeHTML(contact.id) + '" aria-label="Remove ' + escapeHTML(displayName(contact)) + '"><span class="icon delete"></span></button>' +
       "</span>" +
       "</div>";
   }
@@ -3601,20 +3747,19 @@
     if (!state) return "";
     var statusText = ui.status === "online"
       ? "Online"
-      : (ui.status === "offline" ? "Offline — check your internet connection" : "Connecting");
+      : (ui.status === "offline" ? "Offline" : "Connecting");
     var lastSync = ui.lastSync ? relativeTime(ui.lastSync) : "not yet";
 
-    return walletCardHTML() +
-      '<div class="cm-card">' +
+    return '<div class="cm-card">' +
         '<h3>Your profile</h3>' +
         '<div class="cm-profile">' +
           '<span class="cm-avatar cm-avatar-lg" style="--cm-avatar-bg:' + colorFor(state.user.id) + '">' +
             escapeHTML(state.user.emoji) + "</span>" +
           '<div class="cm-profile-main">' +
             '<div class="cm-profile-name">' + verifiedProfileNameHTML(state.user.id, state.user.name) + "</div>" +
-            '<div class="cm-profile-sub">Tap “Change avatar” to pick a new one</div>' +
+            '<div class="cm-profile-sub">Your avatar and display name</div>' +
           "</div>" +
-          '<button type="button" class="cm-chip" data-action="avatar-next">Change avatar</button>' +
+          '<button type="button" class="cm-chip" data-action="avatar-next">Change</button>' +
         "</div>" +
         '<label class="cm-label" for="cm-name">Display name</label>' +
         '<div class="cm-inline">' +
@@ -3627,21 +3772,23 @@
         "<h3>Your unique ID</h3>" +
         '<div class="cm-idbox"><code>' + escapeHTML(state.user.id) + "</code>" +
           '<button type="button" class="cm-chip" data-action="copy-id">Copy</button></div>' +
-        '<p>This ID was generated once on this phone and is saved locally. It is how friends find you. Keep a backup if you reinstall Acode.</p>' +
+        '<p>Friends use this ID to find you. It is stored only on this phone — keep a backup if you reinstall Acode.</p>' +
         '<div class="cm-button-row">' +
           '<button type="button" class="cm-btn" data-action="copy-invite">Copy invite message</button>' +
         "</div>" +
       "</div>" +
+
+      walletCardHTML() +
 
       '<div class="cm-card">' +
         "<h3>Community rooms</h3>" +
         roomsHTML(false) +
         '<div class="cm-inline">' +
           '<span class="cm-hash">#</span>' +
-          '<input class="cm-input" data-role="roominput" type="text" maxlength="32" value="' + escapeHTML(state.settings.room) + '" spellcheck="false">' +
+          '<input class="cm-input" data-role="roominput" type="text" maxlength="32" value="' + escapeHTML(state.settings.room) + '" spellcheck="false" aria-label="Private room code">' +
           '<button type="button" class="cm-btn primary" data-action="save-room">Join</button>' +
         "</div>" +
-        "<p>Pick a preset room above or type your own room code. Everyone who wants to chat together must use the same room code.</p>" +
+        "<p>Preset rooms are public. Type your own shared code for a private room — everyone in it needs the same code.</p>" +
         '<div class="cm-button-row"><button type="button" class="cm-btn" data-action="copy-room">Copy room code</button></div>' +
       "</div>" +
 
@@ -3654,6 +3801,25 @@
       "</div>" +
 
       '<details class="cm-card">' +
+        "<summary>Backup &amp; data</summary>" +
+        '<div class="cm-button-row">' +
+          '<button type="button" class="cm-btn" data-action="export">Export backup</button>' +
+          '<button type="button" class="cm-btn" data-action="import">Import backup</button>' +
+        "</div>" +
+        '<div class="cm-button-row">' +
+          '<button type="button" class="cm-btn danger" data-action="clear-chats">Clear all messages</button>' +
+          '<button type="button" class="cm-btn danger" data-action="reset-id">Reset my identity</button>' +
+        "</div>" +
+      "</details>" +
+
+      '<details class="cm-card">' +
+        "<summary>Privacy &amp; safety</summary>" +
+        '<p>🔒 Rooms use AES-256-GCM with a key derived from the room code. Direct chats use ECDH P-256 plus AES-256-GCM, so only you and your friend can read them. The relay stores ciphertext.</p>' +
+        '<p>No account, analytics, ads or remote code. Your chat key and wallet key stay on this phone. Lucky AI receives only the question you type in the AI Room; replies are stored on this phone.</p>' +
+        '<p>Your Celo wallet key is created here and never sent to the relay, to friends or to Lucky AI. Transfers are signed on this phone. The full security notes are in the SECURITY.md file in the GitHub repository.</p>' +
+      "</details>" +
+
+      '<details class="cm-card">' +
         "<summary>Advanced connection</summary>" +
         '<label class="cm-label" for="cm-relay">Relay server</label>' +
         '<div class="cm-inline">' +
@@ -3664,25 +3830,11 @@
       "</details>" +
 
       '<div class="cm-card">' +
-        "<h3>Data</h3>" +
-        '<div class="cm-button-row">' +
-          '<button type="button" class="cm-btn" data-action="export">Export backup</button>' +
-          '<button type="button" class="cm-btn" data-action="import">Import backup</button>' +
-        "</div>" +
-        '<div class="cm-button-row">' +
-          '<button type="button" class="cm-btn danger" data-action="clear-chats">Clear all messages</button>' +
-          '<button type="button" class="cm-btn danger" data-action="reset-id">Reset my identity</button>' +
-        "</div>" +
-      "</div>" +
-
-      '<div class="cm-card">' +
         "<h3>About</h3>" +
-        '<p class="cm-muted">Community Chat v' + VERSION + " · Status: " + escapeHTML(statusText) +
+        '<p class="cm-muted">Community Chat v' + VERSION + " · " + escapeHTML(statusText) +
           " · Last sync: " + escapeHTML(lastSync) + "</p>" +
-        '<p class="cm-muted">🔒 End-to-end encrypted. Room messages use AES-256-GCM with a key derived from the room code. Direct messages use ECDH P-256 key exchange plus AES-256-GCM, so only you and your friend can read them. The relay stores ciphertext, not your messages.</p>' +
-        '<p class="cm-muted">Your private key stays on this phone and is only included in backups you export. Keep a backup if you reinstall Acode. Preset rooms use public room codes, so create your own private room code for sensitive chats. Lucky AI replies are stored only on this phone, but what you type in the AI Room is sent to luckyai-blush.vercel.app to get an answer.</p>' +
-        '<p class="cm-muted">Your Celo wallet key is created and stored on this phone. It is never sent to the relay, to friends or to Lucky AI. Balances are read from the public Celo network using only your address. You can send tokens to any 0x wallet address; transfers are signed on this phone.</p>' +
-        '<p class="cm-muted">🛡️ Safety: no account, no analytics, no ads and no remote code. The plugin only talks to the message relay (encrypted payloads), the Lucky AI endpoint (AI Room text only) and public Celo RPC nodes. The full source and security notes are in the GitHub repository.</p>' +
+        '<p class="cm-muted">Made for Acode. Send feedback or ask for a verified badge by messaging <code>' +
+          escapeHTML(DEV_ID) + "</code> from the People tab.</p>" +
         (ui.lastError ? '<p class="cm-muted">Last connection error: ' + escapeHTML(ui.lastError) + "</p>" : "") +
       "</div>";
   }
@@ -3857,8 +4009,7 @@
       pollNow();
       toastMsg("Checking for new messages…", 1600);
     } else if (action === "open-room") {
-      switchTab("me");
-      setTimeout(focusRoomInput, 160);
+      openRoomsModal();
     } else if (action === "copy-id") {
       copyId();
     } else if (action === "copy-invite") {
@@ -3955,6 +4106,14 @@
   function onKeyDown(event) {
     if (event.key === "Escape" && ui.modal) {
       closeModal();
+      return;
+    }
+    var row = event.target;
+    if ((event.key === "Enter" || event.key === " ") && row && row.dataset &&
+        row.dataset.action === "open-thread" && row.getAttribute &&
+        row.getAttribute("role") === "button") {
+      event.preventDefault();
+      openThread(row.dataset.peer);
       return;
     }
     if (event.target && event.target.dataset && event.target.dataset.role === "input") {
@@ -4321,32 +4480,7 @@
   function saveRoom() {
     if (!state || !$root) return;
     var input = $root.querySelector('[data-role="roominput"]');
-    var room = cleanRoom(input ? input.value : "");
-    if (!room) {
-      toastMsg("Enter a room code, for example general");
-      if (input) input.focus();
-      return;
-    }
-    if (slugFor(room) === roomSlug()) {
-      state.settings.room = room;
-      saveState();
-      render();
-      toastMsg("You are already in #" + room);
-      return;
-    }
-
-    state.settings.room = room;
-    ensureCommunityThread();
-    if (isAiRoom()) ensureAiWelcome(getThread("community", true));
-    ui.tab = "chats";
-    ui.mode = "tabs";
-    ui.peer = null;
-    removeThreadBackAction();
-    saveState();
-    render();
-    updateSidebar();
-    pollNow();
-    toastMsg("Joined #" + room);
+    if (!joinRoomCode(input ? input.value : "") && input) input.focus();
   }
 
   function saveRelay() {
@@ -4367,19 +4501,6 @@
     toastMsg("Relay updated");
   }
 
-  function focusRoomInput() {
-    if (!$root) return;
-    var input = $root.querySelector('[data-role="roominput"]');
-    if (input) {
-      input.focus();
-      try {
-        input.select();
-      } catch (e) {
-        /* ignore */
-      }
-    }
-  }
-
   /* ------------------------------------------------------------------ *
    * Thread actions
    * ------------------------------------------------------------------ */
@@ -4387,8 +4508,7 @@
   function threadMenu() {
     if (!state || !ui.peer) return;
     if (ui.peer === "community") {
-      switchTab("me");
-      setTimeout(focusRoomInput, 160);
+      roomMenu();
       return;
     }
 
@@ -4730,7 +4850,7 @@
       var error = entry && !entry.ok ? entry.error : "";
 
       html += '<div class="cm-wchain">' +
-        '<div class="cm-wchain-head"><span>' + escapeHTML(chain.name) + "</span>" +
+        '<div class="cm-wchain-head"><span>' + escapeHTML(chain.name) + " network</span>" +
           '<span class="cm-wnet">' + escapeHTML(chain.native.symbol) + "</span></div>";
 
       html += walletRowHTML(
@@ -4989,7 +5109,15 @@
       option.textContent = item.name + " · " + item.native.symbol;
       chainSelect.appendChild(option);
     });
-    chainField.appendChild(chainSelect);
+    if (WALLET_CHAINS.length <= 1) {
+      /* A one-option dropdown looks broken, so show the network as text. */
+      var onlyChain = WALLET_CHAINS[0];
+      if (onlyChain) chainSelect.value = onlyChain.key;
+      chainField.appendChild(cmEl("p", "cm-muted",
+        (onlyChain ? onlyChain.name : "Celo") + " — the only supported network"));
+    } else {
+      chainField.appendChild(chainSelect);
+    }
     modal.body.appendChild(chainField);
 
     var assetField = cmEl("div", "cm-field");

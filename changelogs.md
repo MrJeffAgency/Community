@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.2
+- **Mobile UI polish** for the Acode review: one consistent spacing, type and touch-target system (all primary controls are now at least 44 px), clearer contrast and fewer cramped labels.
+- The top bar now shows the current room as a single tap target. Tapping it opens a **Rooms** sheet with the five preset rooms and a private-room code field, instead of silently jumping to the settings tab.
+- The chat **⋯** menu now opens **Room options** for community rooms, so changing rooms, copying the room code and clearing a chat no longer leave the conversation.
+- The **Me** tab was reorganised into clear cards. Backup, privacy and advanced relay settings are collapsed by default, which removes the long wall of text that made the page feel cluttered.
+- The **People** tab keeps the add-friend form and contact list together; the verified-badge instructions are collapsed and the duplicate chat button on each contact row was removed.
+- The welcome card is shorter and no longer says a room is "above" when the room list is below it.
+- The reworked composer uses consistent icons and 44 px targets. Photo and token buttons are hidden in the AI Room instead of appearing broken, and the AI hint now states that the question is sent to the AI service.
+- Room and direct-chat headers were shortened to the useful information; encryption details moved to the composer hint and the room/chat options sheet.
+- Modals now open as mobile bottom sheets with full-width stacked actions, and long text, IDs and addresses wrap safely on narrow phones.
+- No feature or data changes: Celo-only wallet, BTC, HDO public-room sends, private-chat tokens, airdrops and the verified badge are unchanged.
+
 ## 1.5.1
 - Fixed the missing sidebar app after installation. Acode plugin IDs are lowercase; the manifest now uses `community.chat` and the plugin registers its init hook for the lowercase ID as well as the folder name Acode loads it from.
 - Added a short retry when the sidebar module is not ready during startup, plus a guard against registering the sidebar twice.

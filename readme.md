@@ -6,18 +6,30 @@ Community Chat is a private, local-first chat plugin for Acode with preset rooms
 
 - **Unique ID**: Every user gets a permanent `CM-XXXX-XXXX` ID that is saved on the device.
 - **Preset rooms**: Jump between General, AI Room, Game Room, Dev Room and Help Room (or type your own custom room code).
-- **AI Room**: Chat with **Lucky AI**, powered by `https://luckyai-blush.vercel.app/api/chat`. The assistant welcomes you and answers questions about coding, games, school work, ideas and Acode. AI replies stay on your phone and are not posted to the relay.
+- **AI Room**: Chat with **Lucky AI**, powered by `https://luckyai-blush.vercel.app/api/chat`. The assistant welcomes you and answers questions about coding, games, school work, ideas and Acode. Your question is sent to the AI service; replies stay on your phone and are not posted to the relay.
 - **Direct chats**: Add a friend with their Community ID to chat privately, one-to-one.
 - **Photo sharing**: Send photos in rooms and direct chats. Images are compressed on the device before sending, and tapping a photo opens it full size.
 - **End-to-end encryption**: Relay messages are encrypted on your device. Rooms use AES-256-GCM with a key derived from the room code; direct chats use ECDH P-256 key exchange plus AES-256-GCM.
 - **Presence**: See who is online in the current room.
 - **Notifications**: Get a notification when a new message arrives.
 - **Celo wallet**: Every user (new and existing) gets a Celo wallet, created on the phone. The **Me** tab shows the address and live balances for **CELO**, **G$**, **USDT**, **USDC**, **HDO** and **BTC** (bridged WBTC), with copy, refresh and private-key backup.
-- **Token transfers**: Send tokens to any `0x` wallet address from the wallet, or tap the 🪙 button in a room or direct chat to send and post an encrypted receipt card. Public preset rooms are HDO-only; private room codes and direct chats can send CELO, USDT, USDC, HDO and BTC. Token sending is unavailable in the AI Room.
+- **Token transfers**: Send tokens to any `0x` wallet address from the wallet, or tap the coin button in a room or direct chat to send and post an encrypted receipt card. Public preset rooms are HDO-only; private room codes and direct chats can send CELO, USDT, USDC, HDO and BTC. Token sending is unavailable in the AI Room.
 - **Room airdrops**: In a room or direct chat, choose **Airdrop** instead of a wallet address. The plugin funds a temporary claim wallet and posts an encrypted gift card; the first person to tap **Claim to my wallet** moves the tokens to their own address. Airdrops are unavailable in the AI Room.
 - **Verified badge**: Profile `CM-6S29-CA2X` is marked with a blue verified check. Anyone who needs a verified badge can message the developer at that ID from **People → Verified badge**.
 - **Encrypted backup**: Export your chats, contacts and wallet key protected by a passphrase (PBKDF2 + AES-256-GCM).
 - **Safety number**: In a direct chat, open Chat options and compare the safety number with your friend to confirm nobody is impersonating them.
+
+## Mobile interface
+
+Community Chat is designed for a phone in Acode, not a desktop page squeezed onto a small screen.
+
+- **Top bar:** the current room is a single button. Tap it to open the **Rooms** sheet, choose a preset room or enter a private room code.
+- **Bottom tabs:** **Chats**, **People** and **Me**. The active tab is highlighted and every tab has a full-height touch target.
+- **Chats:** the current room and direct chats are cards with a 64 px touch row. Room chips scroll horizontally.
+- **Inside a chat:** the back arrow returns to the chat list. The **⋯** button opens **Room options** for a community room or **Chat options** for a direct chat.
+- **Composer:** photo and token buttons sit on the left, the message field grows as you type, and the send button is on the right. Photo and token buttons are hidden in the AI Room, where they do not apply.
+- **Me:** profile, ID, rooms, notifications and wallet are separate cards. Backup, privacy and advanced relay settings are collapsed so the page stays short.
+- **Dialogs:** on a phone, dialogs open as bottom sheets with full-width actions.
 
 ## Rooms
 
@@ -29,16 +41,16 @@ Community Chat is a private, local-first chat plugin for Acode with preset rooms
 | 💻 Dev Room | Code and projects |
 | 🛟 Help Room | Ask for help |
 
-Tap a room chip in the **Chats** tab to switch rooms. You can also set a custom room code from the **Me** tab. Everyone who wants to chat together must use the same room code.
+Tap a room chip in the **Chats** tab, or tap the room name in the top bar to open the **Rooms** sheet. You can also set a custom room code from **Me → Community rooms**. Everyone who wants to chat together must use the same room code.
 
 > Upgrading from the old `mrjeffagency.community` build? Uninstall that plugin first, then install this `community.chat` package. Your chats and wallet are stored under the same local key, but Acode treats the two plugin IDs as separate apps. Acode plugin IDs are lowercase, so the manifest uses `community.chat` while the app is still called **Community Chat**.
 
 ## Usage
 
 1. Open the **Community** app from the sidebar.
-2. Pick a room chip, or open **Me** to set a custom room code.
+2. Tap the room name in the top bar to pick a room, or open **Me → Community rooms** to set a custom room code.
 3. Tap **Copy invite message** in **Me** and send it to a friend. They can paste the whole invite (ID + secure key) into **People → Add contact**.
-4. Tap the photo button in the composer to send an image, or the 🪙 button to send tokens — or create an airdrop — in a room or direct chat (not in the AI Room).
+4. Tap the photo button in the composer to send an image, or the coin button to send tokens — or create an airdrop — in a room or direct chat (not in the AI Room).
 5. In the **AI Room**, type a question and Lucky AI will reply.
 
 ## Celo wallet
@@ -55,7 +67,7 @@ Tap a room chip in the **Chats** tab to switch rooms. You can also set a custom 
 
 ## Sending tokens
 
-- Tap **Send tokens** in the wallet, or the 🪙 button inside a room or direct chat.
+- Tap **Send tokens** in the wallet, or the coin button inside a room or direct chat.
 - Choose a token, paste the recipient's `0x` wallet address, enter an amount and confirm. The transaction is signed on the phone and broadcast directly to Celo.
 - In **public preset rooms** (General, Game Room, Dev Room, Help Room) only **HDO** can be sent. In **private room codes** and **direct chats** you can send **CELO, USDT, USDC, HDO or BTC**. The wallet tab can send every supported wallet asset, including G$.
 - You need a small amount of **CELO** to pay the network fee. The plugin checks the fee and your token balance before signing.
@@ -65,7 +77,7 @@ Tap a room chip in the **Chats** tab to switch rooms. You can also set a custom 
 
 ## Room airdrops
 
-- In a room or direct chat, tap 🪙 and set **Delivery** to **Airdrop** instead of entering a wallet address.
+- In a room or direct chat, tap the coin button and set **Delivery** to **Airdrop** instead of entering a wallet address.
 - The plugin creates a temporary claim wallet on the phone, funds it on-chain and posts an encrypted gift card to the chat.
 - For a token airdrop, the temporary wallet receives the token amount plus a small native gas stipend, so the claimer does not need gas. For a native-coin airdrop, the plugin funds the displayed amount plus a gas stipend.
 - The first person to tap **Claim to my wallet** signs a transfer from the temporary wallet to their own address. Later claims fail because the pot is empty. The claim transaction link is shown on the card.
@@ -88,7 +100,7 @@ Tap a room chip in the **Chats** tab to switch rooms. You can also set a custom 
 - Your private keys (chat and wallet) stay on your phone, but they are included in exported backups so you can restore them. Backups are encrypted with a passphrase; the plain option is clearly marked unsafe. Keep backup files secret.
 - If you reinstall Acode or reset your identity without a backup, old encrypted messages cannot be recovered.
 - Encryption requires the device WebView to support WebCrypto. If it does not, sending is blocked instead of falling back to plaintext.
-- Preset rooms use public codes, so the room header shows “public room”. Create your own room code for private groups.
+- Preset rooms use public codes, so **Room options** labels them as public. Create your own room code for private groups.
 - AI Room replies are stored on the device and not relayed to other users, but the text you type in the AI Room is sent to the Lucky AI server (`luckyai-blush.vercel.app`) to get an answer.
 - Token receipts posted in chats are end-to-end encrypted like other messages. The blockchain transaction itself is public: the sender, recipient, amount and token are visible on the relevant chain's explorer.
 - Airdrop claim keys travel inside the encrypted message payload. Whoever can decrypt the chat can claim the airdrop. Treat a public-room airdrop as a public giveaway.
