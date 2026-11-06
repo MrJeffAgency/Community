@@ -31,7 +31,7 @@ Community Chat is a private, local-first chat plugin for Acode with preset rooms
 
 Tap a room chip in the **Chats** tab to switch rooms. You can also set a custom room code from the **Me** tab. Everyone who wants to chat together must use the same room code.
 
-> Upgrading from the old `mrjeffagency.community` build? Uninstall that plugin first, then install this `Community.Chat` package. Your chats and wallet are stored under the same local key, but Acode treats the two plugin IDs as separate apps.
+> Upgrading from the old `mrjeffagency.community` build? Uninstall that plugin first, then install this `community.chat` package. Your chats and wallet are stored under the same local key, but Acode treats the two plugin IDs as separate apps. Acode plugin IDs are lowercase, so the manifest uses `community.chat` while the app is still called **Community Chat**.
 
 ## Usage
 
@@ -92,6 +92,24 @@ Tap a room chip in the **Chats** tab to switch rooms. You can also set a custom 
 - AI Room replies are stored on the device and not relayed to other users, but the text you type in the AI Room is sent to the Lucky AI server (`luckyai-blush.vercel.app`) to get an answer.
 - Token receipts posted in chats are end-to-end encrypted like other messages. The blockchain transaction itself is public: the sender, recipient, amount and token are visible on the relevant chain's explorer.
 - Airdrop claim keys travel inside the encrypted message payload. Whoever can decrypt the chat can claim the airdrop. Treat a public-room airdrop as a public giveaway.
+
+## Security and privacy
+
+This section is for users and store reviewers who want to verify what the plugin does.
+
+- **No accounts, no analytics, no ads, no tracking.** The plugin does not collect usage data, device identifiers or contact lists.
+- **Everything is stored on the device** in `localStorage` under the key `acode.community.chat.v1`: chats, contacts, settings, the chat identity key and the wallet key.
+- **No remote code and no `eval`.** The plugin ships as plain JavaScript in `main.js`. It does not download or execute scripts. The only file it loads dynamically is the local `style.css` that comes in the same package.
+- **Network endpoints used:**
+  - `https://ntfy.sh` (or a relay URL the user enters) — receives encrypted message envelopes, presence pings and public-key announcements. Message text, images, token receipts and airdrop claim keys are encrypted on the device before upload.
+  - `https://luckyai-blush.vercel.app/api/chat` — receives only the text you type in the **AI Room** to generate a reply. Nothing else is sent there.
+  - `https://forno.celo.org` and `https://celo-rpc.publicnode.com` — public Celo RPC endpoints used to read balances and broadcast transactions you approve.
+  - `https://celoscan.io` — only opened when you tap a transaction link.
+- **Wallet safety:** the private key is generated on the phone with `crypto.getRandomValues`. It is never sent to the relay, to friends, to Lucky AI or to any server. Transfers are signed locally; only the signed transaction is broadcast to Celo. Losing the phone without a backup means losing the funds.
+- **Encryption:** rooms use AES-256-GCM with a PBKDF2 key from the room code. Direct chats use ECDH P-256 plus AES-256-GCM. If WebCrypto is unavailable, sending is blocked rather than falling back to plaintext.
+- **Airdrops:** the temporary claim key is stored only inside the encrypted message payload. It is never posted in plaintext, and the on-chain funding transaction is public.
+- **Backups:** exported backups are encrypted with PBKDF2 + AES-256-GCM. A plain backup option exists and is clearly marked unsafe.
+- **Source:** the complete source is published at [MrJeffAgency/Community](https://github.com/MrJeffAgency/Community/tree/main), and the installable zip can be rebuilt from that source.
 
 ## Author
 

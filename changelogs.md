@@ -1,7 +1,13 @@
 # Changelog
 
+## 1.5.1
+- Fixed the missing sidebar app after installation. Acode plugin IDs are lowercase; the manifest now uses `community.chat` and the plugin registers its init hook for the lowercase ID as well as the folder name Acode loads it from.
+- Added a short retry when the sidebar module is not ready during startup, plus a guard against registering the sidebar twice.
+- Added a **Security and privacy** section to the README so reviewers and users can see exactly what the plugin does with data and which network endpoints it contacts.
+- No feature changes: Celo-only wallet, BTC, HDO public-room sends, private-chat tokens, airdrops and the verified badge are all unchanged.
+
 ## 1.5.0
-- Changed the plugin ID to **Community.Chat** and added the GitHub repository link (`https://github.com/MrJeffAgency/Community/tree/main`) to the plugin manifest. Because the ID changed, remove the old `mrjeffagency.community` build before installing this one.
+- Changed the plugin ID to **community.chat** and added the GitHub repository link (`https://github.com/MrJeffAgency/Community/tree/main`) to the plugin manifest. Because the ID changed, remove the old `mrjeffagency.community` build before installing this one.
 - The wallet is now **Celo only**. BNB Smart Chain, Polygon and Ethereum support were removed.
 - Added **BTC** to the wallet using the Celo bridged WBTC contract `0x8aC2901Dd8A1F17a1A4768A6bA4C3751e3995B2D` (8 decimals).
 - Public preset rooms can only send **HDO** in chat. Private room codes and direct chats can send **CELO, USDT, USDC, HDO and BTC**. The wallet tab can still send every supported wallet asset, including G$.

@@ -18,8 +18,10 @@
    * Constants
    * ------------------------------------------------------------------ */
 
-  var PLUGIN_ID = "Community.Chat";
-  var VERSION = "1.5.0";
+  /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
+     for setPluginInit in sync is what makes the sidebar app appear. */
+  var PLUGIN_ID = "community.chat";
+  var VERSION = "1.5.1";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -86,6 +88,7 @@
   var state = null;
   var $root = null;
   var sidebarEl = null;
+  var sidebarRegistered = false;
   var toast = null;
 
   var running = false;
@@ -3253,6 +3256,7 @@
       "<h2>Welcome to Community 👋</h2>" +
       "<p>Your unique ID was created and saved on this phone. Share it with a friend who installed this plugin so you can chat directly.</p>" +
       "<p>Pick a room above — tap <b>AI Room</b> to chat with Lucky AI, and use the photo button to share pictures in rooms or direct chats.</p>" +
+      "<p>🛡️ Private by design: chats and wallet keys stay on this phone. The relay only receives encrypted messages. No analytics, no ads, no remote code.</p>" +
       '<div class="cm-idbox"><code>' + escapeHTML(state.user.id) + "</code>" +
       '<button type="button" class="cm-chip" data-action="copy-id">Copy</button></div>' +
       '<div class="cm-welcome-actions">' +
@@ -3678,6 +3682,7 @@
         '<p class="cm-muted">🔒 End-to-end encrypted. Room messages use AES-256-GCM with a key derived from the room code. Direct messages use ECDH P-256 key exchange plus AES-256-GCM, so only you and your friend can read them. The relay stores ciphertext, not your messages.</p>' +
         '<p class="cm-muted">Your private key stays on this phone and is only included in backups you export. Keep a backup if you reinstall Acode. Preset rooms use public room codes, so create your own private room code for sensitive chats. Lucky AI replies are stored only on this phone, but what you type in the AI Room is sent to luckyai-blush.vercel.app to get an answer.</p>' +
         '<p class="cm-muted">Your Celo wallet key is created and stored on this phone. It is never sent to the relay, to friends or to Lucky AI. Balances are read from the public Celo network using only your address. You can send tokens to any 0x wallet address; transfers are signed on this phone.</p>' +
+        '<p class="cm-muted">🛡️ Safety: no account, no analytics, no ads and no remote code. The plugin only talks to the message relay (encrypted payloads), the Lucky AI endpoint (AI Room text only) and public Celo RPC nodes. The full source and security notes are in the GitHub repository.</p>' +
         (ui.lastError ? '<p class="cm-muted">Last connection error: ' + escapeHTML(ui.lastError) + "</p>" : "") +
       "</div>";
   }
@@ -5606,9 +5611,17 @@
   }
 
   function registerSidebar() {
+    if (sidebarRegistered) return true;
     var sidebarApps = safeRequire("sidebarApps");
-    if (!sidebarApps) return;
+    if (!sidebarApps || typeof sidebarApps.add !== "function") return false;
     try {
+      if (typeof sidebarApps.remove === "function") {
+        try {
+          sidebarApps.remove("community-chat");
+        } catch (e) {
+          /* ignore */
+        }
+      }
       sidebarApps.add(
         "chat_bubble",
         "community-chat",
@@ -5627,8 +5640,11 @@
           renderSidebar();
         }
       );
+      sidebarRegistered = true;
+      return true;
     } catch (e) {
       console.warn("[Community] Could not register sidebar app", e);
+      return false;
     }
   }
 
@@ -5663,7 +5679,11 @@
 
     injectStyle();
     registerCommands();
-    registerSidebar();
+    if (!registerSidebar()) {
+      /* The sidebar module may not be initialised yet on some Acode builds. */
+      setTimeout(registerSidebar, 600);
+      setTimeout(registerSidebar, 2000);
+    }
 
     document.addEventListener("visibilitychange", onVisibilityChange);
 
@@ -5757,6 +5777,7 @@
 
     $root = null;
     sidebarEl = null;
+    sidebarRegistered = false;
     pageRef = null;
     state = null;
     acodeApi = null;
@@ -5766,11 +5787,42 @@
    * Boot
    * ------------------------------------------------------------------ */
 
-  if (window.acode && typeof window.acode.setPluginInit === "function") {
-    acodeApi = window.acode;
-    acodeApi.setPluginInit(PLUGIN_ID, init);
-    if (typeof acodeApi.setPluginUnmount === "function") {
-      acodeApi.setPluginUnmount(PLUGIN_ID, unmount);
+  /* Acode stores plugins in a folder named after the ID from the registry.
+     Registry IDs are lowercase, so a manifest ID with uppercase letters can
+     end up being loaded as a different ID than the one passed to
+     setPluginInit. Register the init/unmount hooks for every plausible ID so
+     the sidebar app always appears. */
+  function pluginIdCandidates() {
+    var ids = [PLUGIN_ID, String(PLUGIN_ID).toLowerCase()];
+    try {
+      var script = document.currentScript;
+      var src = script && script.src ? String(script.src).split("?")[0].split("#")[0] : "";
+      var parts = src.split("/");
+      parts.pop();
+      var folder = decodeURIComponent(parts.pop() || "");
+      if (folder) ids.push(folder);
+    } catch (e) {
+      /* ignore */
     }
+    return ids.filter(function (id, index) {
+      return !!id && ids.indexOf(id) === index;
+    });
   }
+
+  function registerPluginHooks() {
+    if (!window.acode || typeof window.acode.setPluginInit !== "function") return;
+    acodeApi = window.acode;
+    pluginIdCandidates().forEach(function (id) {
+      try {
+        acodeApi.setPluginInit(id, init);
+        if (typeof acodeApi.setPluginUnmount === "function") {
+          acodeApi.setPluginUnmount(id, unmount);
+        }
+      } catch (e) {
+        /* try the next candidate */
+      }
+    });
+  }
+
+  registerPluginHooks();
 })();

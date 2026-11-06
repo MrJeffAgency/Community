@@ -1,7 +1,7 @@
 {
-  "id": "Community.Chat",
+  "id": "community.chat",
   "name": "Community Chat",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "main": "main.js",
   "readme": "readme.md",
   "icon": "icon.png",
