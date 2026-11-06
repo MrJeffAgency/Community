@@ -18,7 +18,7 @@ Nothing is uploaded to a developer server. There is no account system, no analyt
 
 | Endpoint | What is sent | When |
 | --- | --- | --- |
-| `https://ntfy.sh` (or a user-supplied relay) | Encrypted message envelopes, presence pings, public keys | When sending a message or while the app is open |
+| `https://ntfy.envs.net` (or a user-supplied relay) | Encrypted message envelopes, presence pings, public keys, and download of attachment-backed messages you receive | When sending a message or while the app is open |
 | `https://luckyai-blush.vercel.app/api/chat` | Only the text typed in the AI Room | When you ask Lucky AI a question |
 | `https://forno.celo.org`, `https://celo-rpc.publicnode.com` | Public wallet address reads and signed transactions | When loading balances or sending funds |
 | `https://celoscan.io` | Nothing (opened as a normal link) | When you tap a transaction link |

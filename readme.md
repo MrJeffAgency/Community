@@ -94,7 +94,7 @@ Tap a room chip in the **Chats** tab, or tap the room name in the top bar to ope
 ## Privacy
 
 - Messages and contacts are stored locally on your device.
-- Room and direct messages are delivered through a public relay (default: `ntfy.sh`), but the relay only receives **encrypted ciphertext**.
+- Room and direct messages are delivered through a public relay (default: `ntfy.envs.net`), but the relay only receives **encrypted ciphertext**. Everyone you chat with must use the same relay; you can change it in **Me → Advanced**.
 - **Rooms:** AES-256-GCM with a key derived from the room code using PBKDF2. Anyone who knows the room code can decrypt the room, so use your own private room code for sensitive conversations. The preset rooms use public codes.
 - **Direct chats:** ECDH P-256 key exchange plus AES-256-GCM. Only you and your friend hold the private keys, so the relay and other users cannot read the messages.
 - Your private keys (chat and wallet) stay on your phone, but they are included in exported backups so you can restore them. Backups are encrypted with a passphrase; the plain option is clearly marked unsafe. Keep backup files secret.
@@ -113,7 +113,7 @@ This section is for users and store reviewers who want to verify what the plugin
 - **Everything is stored on the device** in `localStorage` under the key `acode.community.chat.v1`: chats, contacts, settings, the chat identity key and the wallet key.
 - **No remote code and no `eval`.** The plugin ships as plain JavaScript in `main.js`. It does not download or execute scripts. The only file it loads dynamically is the local `style.css` that comes in the same package.
 - **Network endpoints used:**
-  - `https://ntfy.sh` (or a relay URL the user enters) — receives encrypted message envelopes, presence pings and public-key announcements. Message text, images, token receipts and airdrop claim keys are encrypted on the device before upload.
+  - `https://ntfy.envs.net` (or a relay URL the user enters) — receives encrypted message envelopes, presence pings and public-key announcements. Message text, images, token receipts and airdrop claim keys are encrypted on the device before upload. Older builds used `ntfy.sh`, which has a low daily quota; the plugin migrates that default once.
   - `https://luckyai-blush.vercel.app/api/chat` — receives only the text you type in the **AI Room** to generate a reply. Nothing else is sent there.
   - `https://forno.celo.org` and `https://celo-rpc.publicnode.com` — public Celo RPC endpoints used to read balances and broadcast transactions you approve.
   - `https://celoscan.io` — only opened when you tap a transaction link.

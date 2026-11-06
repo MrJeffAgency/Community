@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.3
+- **Fixed messages not sending.** The old default relay (`ntfy.sh`) allows only 250 published messages per visitor per day, and the 60-second presence ping used all of them. Once the quota ran out, every send failed with HTTP 429.
+- The default relay is now **`https://ntfy.envs.net`**, a community ntfy server with a much larger daily allowance. Existing installs migrate from the old `ntfy.sh` default once; entering a relay manually in Me → Advanced still works and is kept.
+- Presence now refreshes every **15 minutes** instead of every 60 seconds, and duplicate startup/focus pings are collapsed. That drops background traffic from about 1,440 messages a day to about 96.
+- **Images and long messages now arrive.** ntfy stores encrypted bodies over 4,096 bytes as attachments; the receiver now downloads and decrypts those attachments instead of ignoring them.
+- Relay failures are no longer hidden behind “Message saved on this phone but not sent”. The toast now shows the actual reason (quota/429, oversized message, rejected relay) and keeps the tap-to-retry action.
+- No feature or data changes: rooms, private chats, E2E encryption, images, wallet tokens, airdrops and the verified badge are unchanged.
+
 ## 1.5.2
 - **Mobile UI polish** for the Acode review: one consistent spacing, type and touch-target system (all primary controls are now at least 44 px), clearer contrast and fewer cramped labels.
 - The top bar now shows the current room as a single tap target. Tapping it opens a **Rooms** sheet with the five preset rooms and a private-room code field, instead of silently jumping to the settings tab.

@@ -5,7 +5,7 @@
  *
  *  - Every installation gets a unique ID (CM-XXXX-XXXX) which is
  *    generated once and stored in localStorage on the phone.
- *  - Messages are sent through a public ntfy.sh topic (or any
+ *  - Messages are sent through a public ntfy topic (or any
  *    compatible relay) so two phones with this plugin can chat.
  *  - All conversations are also stored locally on the phone.
  *
@@ -21,12 +21,16 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.5.2";
+  var VERSION = "1.5.3";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
   var DEFAULT_ROOM = "general";
-  var DEFAULT_RELAY = "https://ntfy.sh";
+  var DEFAULT_RELAY = "https://ntfy.envs.net";
+  /* Older builds defaulted to ntfy.sh, which has a 250 message/day
+     quota per visitor. Stored copies of that default are migrated once
+     to DEFAULT_RELAY; a relay the user types in later is kept as-is. */
+  var LEGACY_DEFAULT_RELAY = "https://ntfy.sh";
   var TOPIC_PREFIX = "acode-community-v1-";
   var THREAD_ACTION_ID = PLUGIN_ID + ".thread";
   var AI_ENDPOINT = "https://luckyai-blush.vercel.app/api/chat?message=";
@@ -45,8 +49,12 @@
 
   var POLL_FAST_MS = 5000;
   var POLL_SLOW_MS = 25000;
-  var PRESENCE_MS = 60000;
-  var ONLINE_MS = 150000;
+  /* Presence is a courtesy signal, not a heartbeat. Publishing every
+     minute burned through public relay quotas, so it now refreshes every
+     15 minutes and stays "online" for 20. */
+  var PRESENCE_MS = 15 * 60 * 1000;
+  var ONLINE_MS = 20 * 60 * 1000;
+  var MAX_RELAY_ATTACHMENT_BYTES = 2 * 1024 * 1024;
   var MAX_TEXT = 1200;
   var MAX_MESSAGES = 250;
   var MAX_THREADS = 50;
@@ -94,6 +102,8 @@
   var running = false;
   var pollTimer = null;
   var presenceTimer = null;
+  var presenceInFlight = false;
+  var lastPresenceAt = 0;
   var tickTimer = null;
   var pollInFlight = false;
   var memoryStore = null;
@@ -141,6 +151,21 @@
     } catch (e) {
       /* ignore */
     }
+  }
+
+  /* Keep relay failures actionable: the old generic "not sent" toast hid
+     the real reason (quota, bad relay URL, oversized message). */
+  function sendFailureToast(prefix, error, retryLabel) {
+    var reason = error && error.message ? String(error.message) : "";
+    if (reason && /secure key|Encryption|encrypt/i.test(reason)) {
+      toastMsg(reason + " Tap the " + retryLabel + " to retry.", 6200);
+      return;
+    }
+    if (reason) {
+      toastMsg(prefix + ": " + reason + " Tap the " + retryLabel + " to retry.", 6200);
+      return;
+    }
+    toastMsg(prefix + ". Tap the " + retryLabel + " to retry.", 5200);
   }
 
   function escapeHTML(value) {
@@ -1640,6 +1665,7 @@
 
   function normalizeState(data) {
     var input = data && typeof data === "object" ? data : {};
+    var inputSchema = Number(input.schema) || 0;
     var userInput = input.user && typeof input.user === "object" ? input.user : {};
     var userId = normalizeId(userInput.id) || makeUserId();
 
@@ -1652,7 +1678,11 @@
 
     var settingsInput = input.settings && typeof input.settings === "object" ? input.settings : {};
     var room = cleanRoom(settingsInput.room) || DEFAULT_ROOM;
-    var relay = cleanRelay(settingsInput.relay) || DEFAULT_RELAY;
+    var relay = cleanRelay(settingsInput.relay);
+    if (!relay) relay = DEFAULT_RELAY;
+    /* One-time migration: states saved by 1.5.2 and earlier carry the old
+       ntfy.sh default. Newer states keep exactly what the user saved. */
+    if (inputSchema < 3 && relay === LEGACY_DEFAULT_RELAY) relay = DEFAULT_RELAY;
 
     var contacts = {};
     var contactsInput = input.contacts && typeof input.contacts === "object" ? input.contacts : {};
@@ -1725,7 +1755,7 @@
     };
 
     return {
-      schema: 2,
+      schema: 3,
       user: user,
       settings: {
         room: room,
@@ -2005,6 +2035,27 @@
     return request;
   }
 
+  function relayErrorText(status, body) {
+    var detail = "";
+    try {
+      var parsed = JSON.parse(body || "");
+      if (parsed && parsed.error) detail = String(parsed.error);
+    } catch (e) {
+      detail = String(body || "").trim();
+    }
+    if (status === 429) {
+      return "Relay is busy (daily message limit reached). Wait a moment and tap to retry, or change the relay in Me \u2192 Advanced.";
+    }
+    if (status === 413) {
+      return "That message is too large for the relay.";
+    }
+    if (status === 401 || status === 403) {
+      return "The relay rejected this message (HTTP " + status + "). Check the relay URL.";
+    }
+    if (detail) return "Relay error: " + detail.slice(0, 120);
+    return "Relay returned HTTP " + status;
+  }
+
   function publish(envelope, topic) {
     var base = relayBase();
     var url = base + "/" + encodeURIComponent(topic || topicFor(roomSlug()));
@@ -2013,15 +2064,29 @@
       body: JSON.stringify(envelope),
       cache: "no-store"
     }, 25000).then(function (response) {
-      if (!response.ok) {
-        throw new Error("Relay returned HTTP " + response.status);
-      }
-      return response;
+      if (response.ok) return response;
+      return response.text().catch(function () {
+        return "";
+      }).then(function (body) {
+        var error = new Error(relayErrorText(response.status, body));
+        error.status = response.status;
+        error.body = String(body || "").slice(0, 300);
+        throw error;
+      });
     });
   }
 
-  function publishPresence() {
+  function publishPresence(force) {
     if (!running || !state) return Promise.resolve();
+    var now = Date.now();
+    /* Collapse duplicate calls (startup, tab focus, avatar changes) into
+       one message. A forced call is used when the profile actually changed. */
+    if (!force && lastPresenceAt && now - lastPresenceAt < PRESENCE_MS) {
+      return Promise.resolve();
+    }
+    if (presenceInFlight) return Promise.resolve();
+    presenceInFlight = true;
+    lastPresenceAt = now;
     return ensureIdentityKeys().then(function () {
       if (!running || !state) return null;
       var envelope = {
@@ -2032,12 +2097,15 @@
         name: state.user.name,
         emoji: state.user.emoji,
         type: "presence",
-        ts: Date.now()
+        ts: now
       };
       if (state.crypto && state.crypto.publicKey) envelope.pk = state.crypto.publicKey;
       return publish(envelope);
     }).catch(function () {
       return null;
+    }).then(function (result) {
+      presenceInFlight = false;
+      return result;
     });
   }
 
@@ -2058,6 +2126,35 @@
     return "all";
   }
 
+  function parseEnvelopeText(text) {
+    if (typeof text !== "string" || !text) return null;
+    try {
+      var value = JSON.parse(text);
+      return value && typeof value === "object" ? value : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function fetchAttachmentEnvelope(url, guard) {
+    var target = String(url || "");
+    if (!target) return Promise.resolve(null);
+    if (target.charAt(0) === "/") target = relayBase() + target;
+    if (!/^https?:\/\//i.test(target)) return Promise.resolve(null);
+    return fetchWithTimeout(target, { cache: "no-store" }, 20000)
+      .then(function (response) {
+        if (!response.ok) return "";
+        return response.text();
+      })
+      .then(function (text) {
+        if (!running || (guard && !guard())) return null;
+        return parseEnvelopeText(text);
+      })
+      .catch(function () {
+        return null;
+      });
+  }
+
   function pollTopic(url, guard, onCursor) {
     return fetchWithTimeout(url, { cache: "no-store" })
       .then(function (response) {
@@ -2072,6 +2169,7 @@
         if (!running || (guard && !guard())) return;
 
         var nextCursor = null;
+        var attachments = [];
         var lines = String(text || "").split("\n");
         for (var i = 0; i < lines.length; i += 1) {
           var line = lines[i].trim();
@@ -2082,25 +2180,46 @@
           } catch (e) {
             continue;
           }
-          if (!item || item.event !== "message" || typeof item.message !== "string") {
-            continue;
-          }
+          if (!item || item.event !== "message") continue;
           if (item.id) {
             nextCursor = {
               id: String(item.id).slice(0, 80),
               ts: Number(item.time) || Math.floor(Date.now() / 1000)
             };
           }
-          var envelope;
-          try {
-            envelope = JSON.parse(item.message);
-          } catch (e) {
+
+          var envelope = parseEnvelopeText(item.message);
+          if (envelope) {
+            handleEnvelope(envelope);
             continue;
           }
-          handleEnvelope(envelope);
+
+          /* ntfy stores bodies over 4,096 bytes (encrypted images and long
+             messages) as attachments and replaces message with a short
+             "You received a file" note. Fetch the attachment and unwrap it. */
+          var attachment = item.attachment && typeof item.attachment === "object"
+            ? item.attachment
+            : null;
+          var size = attachment ? Number(attachment.size) || 0 : 0;
+          if (attachment && attachment.url && (!size || size <= MAX_RELAY_ATTACHMENT_BYTES)) {
+            attachments.push(fetchAttachmentEnvelope(attachment.url, guard));
+          }
         }
 
-        if (nextCursor) onCursor(nextCursor);
+        if (!attachments.length) {
+          if (nextCursor) onCursor(nextCursor);
+          return;
+        }
+
+        return Promise.all(attachments).then(function (envelopes) {
+          if (!running || (guard && !guard())) return;
+          for (var j = 0; j < envelopes.length; j += 1) {
+            if (envelopes[j]) handleEnvelope(envelopes[j]);
+          }
+          /* Advance only after the attachment bodies are handled so a
+             dropped connection does not skip a photo on the next poll. */
+          if (nextCursor) onCursor(nextCursor);
+        });
       });
   }
 
@@ -2392,12 +2511,7 @@
         setStatus("offline", error && error.message ? error.message : String(error));
         renderThreadMessages();
         updateSidebar();
-        var reason = error && error.message ? error.message : "";
-        if (reason && /secure key|Encryption|encrypt/i.test(reason)) {
-          toastMsg(reason + " Tap the message to retry.", 5200);
-        } else {
-          toastMsg("Message saved on this phone but not sent. Tap it to retry.");
-        }
+        sendFailureToast("Message saved on this phone but not sent", error, "message");
       });
   }
 
@@ -2453,10 +2567,7 @@
         saveState();
         if (ui.mode === "thread" && ui.peer === peer) renderThreadMessages();
         updateSidebar();
-        var reason = error && error.message ? error.message : "";
-        toastMsg(reason
-          ? "Tokens were sent on-chain, but the chat note could not be posted. Tap it to retry. (" + reason + ")"
-          : "Tokens were sent on-chain, but the chat note could not be posted. Tap it to retry.", 6200);
+        sendFailureToast("Tokens were sent on-chain, but the chat note could not be posted", error, "message");
       });
   }
 
@@ -2721,10 +2832,7 @@
         saveState();
         if (ui.mode === "thread" && ui.peer === peer) renderThreadMessages();
         updateSidebar();
-        var reason = error && error.message ? error.message : "";
-        toastMsg(reason
-          ? "Airdrop funded, but the chat message could not be posted. Tap it to retry. (" + reason + ")"
-          : "Airdrop funded, but the chat message could not be posted. Tap it to retry.", 7000);
+        sendFailureToast("Airdrop funded, but the chat message could not be posted", error, "message");
         showAirdropKey(info);
       });
   }
@@ -2874,12 +2982,7 @@
         saveState();
         renderThreadMessages();
         setStatus("offline", error && error.message ? error.message : String(error));
-        var reason = error && error.message ? error.message : "";
-        if (reason && /secure key|Encryption|encrypt/i.test(reason)) {
-          toastMsg(reason, 5200);
-        } else {
-          toastMsg("Still offline. The message is saved and can be retried.");
-        }
+        sendFailureToast("Still not sent; the message is saved", error, "message");
       });
   }
 
@@ -3826,7 +3929,7 @@
           '<input class="cm-input" id="cm-relay" data-role="relayinput" type="text" value="' + escapeHTML(state.settings.relay) + '" spellcheck="false">' +
           '<button type="button" class="cm-btn primary" data-action="save-relay">Save</button>' +
         "</div>" +
-        "<p>The default relay is ntfy.sh. Only change this if you have a compatible self-hosted relay. Changing it clears the sync position.</p>" +
+        "<p>The default relay is ntfy.envs.net. Only change this if you have a compatible self-hosted relay. Everyone you chat with must use the same relay. Changing it clears the sync position.</p>" +
       "</details>" +
 
       '<div class="cm-card">' +
@@ -4280,12 +4383,7 @@
         setStatus("offline", error && error.message ? error.message : String(error));
         renderThreadMessages();
         updateSidebar();
-        var reason = error && error.message ? error.message : "";
-        if (reason && /secure key|Encryption|encrypt/i.test(reason)) {
-          toastMsg(reason + " Tap the photo to retry.", 5200);
-        } else {
-          toastMsg("Photo saved on this phone but not sent. Tap it to retry.");
-        }
+        sendFailureToast("Photo saved on this phone but not sent", error, "photo");
       });
   }
 
@@ -4455,7 +4553,7 @@
     var index = AVATARS.indexOf(state.user.emoji);
     state.user.emoji = AVATARS[(index + 1 + AVATARS.length) % AVATARS.length];
     saveState();
-    publishPresence();
+    publishPresence(true);
     render();
     updateSidebar();
   }
@@ -4471,7 +4569,7 @@
     }
     state.user.name = name;
     saveState();
-    publishPresence();
+    publishPresence(true);
     render();
     updateSidebar();
     toastMsg("Name saved");
@@ -4705,7 +4803,7 @@
         ensureIdentityKeys().then(function (ok) {
           if (!ok) return;
           publishPublicKey(true);
-          publishPresence();
+          publishPresence(true);
         });
         toastMsg("New ID: " + state.user.id, 5000);
       },
@@ -5617,7 +5715,7 @@
     (restoredCrypto ? Promise.resolve(true) : ensureIdentityKeys()).then(function (ok) {
       if (!ok) return;
       publishPublicKey(true);
-      publishPresence();
+      publishPresence(true);
     });
     toastMsg("Backup imported");
   }
@@ -5781,6 +5879,9 @@
       schedulePoll(POLL_SLOW_MS);
     } else {
       pollNow();
+      /* Refresh presence when the user comes back, but the throttle keeps
+         rapid tab switching from posting a burst. */
+      publishPresence();
     }
   }
 
@@ -5818,12 +5919,9 @@
     ensureIdentityKeys().then(function (ok) {
       if (!ok) return;
       publishPublicKey(true);
-      publishPresence();
+      publishPresence(true);
     });
 
-    setTimeout(function () {
-      publishPresence();
-    }, 1400);
     presenceTimer = setInterval(function () {
       publishPresence();
     }, PRESENCE_MS);
