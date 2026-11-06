@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.1
+- The default relay is now the community relay at `https://community-relay.hdo-box.workers.dev`, which has no daily message limit. Existing installs that were still on `ntfy.sh` or `ntfy.envs.net` are migrated to it once. A relay you entered yourself is kept.
+- New installs no longer need to change any setting to avoid the daily quota.
+
 ## 1.6.0
 - **Optional self-hosted relay with no daily message limit.** Added a complete Cloudflare Workers + D1 relay in the `relay/` folder of the repository. It speaks the same protocol as the public relay, so the plugin works with either. Click the **Deploy to Cloudflare** button in `relay/README.md` and Cloudflare creates the database and deploys it for free; paste the resulting `https://…workers.dev` URL into **Me → Relay & connection → Relay server** and tap Save.
 - **Relay tools in the app:** Test, Copy, Share, and Reset to default buttons in **Me → Relay & connection**, plus a **Get unlimited relay** button that opens the setup guide. Everyone you chat with must use the same relay; Share copies a short instruction message.

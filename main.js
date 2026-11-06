@@ -21,16 +21,17 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.6.0";
+  var VERSION = "1.6.1";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
   var DEFAULT_ROOM = "general";
-  var DEFAULT_RELAY = "https://ntfy.envs.net";
-  /* Older builds defaulted to ntfy.sh, which has a 250 message/day
-     quota per visitor. Stored copies of that default are migrated once
-     to DEFAULT_RELAY; a relay the user types in later is kept as-is. */
+  var DEFAULT_RELAY = "https://community-relay.hdo-box.workers.dev";
+  /* Older builds defaulted to ntfy.sh / ntfy.envs.net, which have a daily
+     message quota. Stored copies of those defaults are migrated once to
+     DEFAULT_RELAY; a relay the user types in later is kept as-is. */
   var LEGACY_DEFAULT_RELAY = "https://ntfy.sh";
+  var LEGACY_DEFAULT_RELAY_2 = "https://ntfy.envs.net";
   /* The relay folder in the repository is a complete Cloudflare Worker
      with no daily message quota. The plugin cannot deploy it for the
      user, so this opens the setup guide instead. */
@@ -1684,9 +1685,10 @@
     var room = cleanRoom(settingsInput.room) || DEFAULT_ROOM;
     var relay = cleanRelay(settingsInput.relay);
     if (!relay) relay = DEFAULT_RELAY;
-    /* One-time migration: states saved by 1.5.2 and earlier carry the old
-       ntfy.sh default. Newer states keep exactly what the user saved. */
-    if (inputSchema < 3 && relay === LEGACY_DEFAULT_RELAY) relay = DEFAULT_RELAY;
+    /* One-time migration: states saved by 1.6.0 and earlier carry the old
+       ntfy.sh / ntfy.envs.net default. Newer states keep exactly what the
+       user saved. */
+    if (inputSchema < 4 && (relay === LEGACY_DEFAULT_RELAY || relay === LEGACY_DEFAULT_RELAY_2)) relay = DEFAULT_RELAY;
 
     var contacts = {};
     var contactsInput = input.contacts && typeof input.contacts === "object" ? input.contacts : {};
@@ -1759,7 +1761,7 @@
     };
 
     return {
-      schema: 3,
+      schema: 4,
       user: user,
       settings: {
         room: room,
@@ -3942,7 +3944,7 @@
           '<button type="button" class="cm-btn" data-action="default-relay">Reset to default</button>' +
           '<button type="button" class="cm-btn primary" data-action="relay-guide">Get unlimited relay</button>' +
         "</div>" +
-        "<p>The default relay is <code>ntfy.envs.net</code>, a free public relay with a daily message limit. For no daily limit, deploy the free Community Relay (Cloudflare) and paste its URL above. Everyone you chat with must use the same relay. Changing it clears the sync position.</p>" +
+        "<p>The default relay is the community relay (no daily message limit). Everyone you chat with must use the same relay. Changing it clears the sync position.</p>" +
       "</details>" +
 
       '<div class="cm-card">' +

@@ -105,7 +105,7 @@ The relay stores only encrypted envelopes and keeps the newest 1,000 messages pe
 ## Privacy
 
 - Messages and contacts are stored locally on your device.
-- Room and direct messages are delivered through a relay (default: `ntfy.envs.net`), but the relay only receives **encrypted ciphertext**. Everyone you chat with must use the same relay; you can change it in **Me → Relay & connection**. For no daily message limit, deploy the free Community Relay (Cloudflare) from the `relay/` folder and paste its URL.
+- Room and direct messages are delivered through a relay (default: `community-relay.hdo-box.workers.dev`), but the relay only receives **encrypted ciphertext**. Everyone you chat with must use the same relay; you can change it in **Me → Relay & connection**. For no daily message limit, deploy the free Community Relay (Cloudflare) from the `relay/` folder and paste its URL.
 - **Rooms:** AES-256-GCM with a key derived from the room code using PBKDF2. Anyone who knows the room code can decrypt the room, so use your own private room code for sensitive conversations. The preset rooms use public codes.
 - **Rooms:** AES-256-GCM with a key derived from the room code using PBKDF2. Anyone who knows the room code can decrypt the room, so use your own private room code for sensitive conversations. The preset rooms use public codes.
 - **Direct chats:** ECDH P-256 key exchange plus AES-256-GCM. Only you and your friend hold the private keys, so the relay and other users cannot read the messages.
@@ -125,8 +125,9 @@ This section is for users and store reviewers who want to verify what the plugin
 - **Everything is stored on the device** in `localStorage` under the key `acode.community.chat.v1`: chats, contacts, settings, the chat identity key and the wallet key.
 - **No remote code and no `eval`.** The plugin ships as plain JavaScript in `main.js`. It does not download or execute scripts. The only file it loads dynamically is the local `style.css` that comes in the same package.
 - **Network endpoints used:**
-  - `https://ntfy.envs.net` (or a relay URL the user enters) — receives encrypted message envelopes, presence pings and public-key announcements. Message text, images, token receipts and airdrop claim keys are encrypted on the device before upload. Older builds used `ntfy.sh`, which has a low daily quota; the plugin migrates that default once.
-  - `relay/` in this repository is a self-hostable Cloudflare Worker + D1 relay (see `relay/README.md`) that uses the same protocol and has no daily message quota. A relay stores encrypted envelopes plus routing metadata (Community ID, display name, emoji, public key, timestamp).
+  - `https://community-relay.hdo-box.workers.dev` (default) — receives encrypted message envelopes, presence pings and public-key announcements. Message text, images, token receipts and airdrop claim keys are encrypted on the device before upload. This relay has no daily message quota.
+  - `https://ntfy.envs.net` / `https://ntfy.sh` — older default relays with a daily quota. Builds before 1.6.1 used these; the plugin migrates that default once.
+  - `relay/` in this repository is the same relay, self-hostable on Cloudflare (see `relay/README.md`). A relay stores encrypted envelopes plus routing metadata (Community ID, display name, emoji, public key, timestamp).
   - `https://luckyai-blush.vercel.app/api/chat` — receives only the text you type in the **AI Room** to generate a reply. Nothing else is sent there.
   - `https://forno.celo.org` and `https://celo-rpc.publicnode.com` — public Celo RPC endpoints used to read balances and broadcast transactions you approve.
   - `https://celoscan.io` — only opened when you tap a transaction link.
