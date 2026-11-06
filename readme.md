@@ -85,6 +85,17 @@ Tap a room chip in the **Chats** tab, or tap the room name in the top bar to ope
 - Airdrops are unavailable in the **AI Room**.
 - Preset rooms use public room codes: anyone who knows the code can join and claim an airdrop posted there. Airdrops in preset public rooms are **HDO only**. Use a private room code for a private drop with CELO, USDT, USDC, HDO or BTC.
 
+## Relay (optional, no daily limit)
+
+Community Chat uses a public relay by default. If your community sends more messages than the free relay allows, you can deploy your own in about two minutes:
+
+1. Open the setup guide in `relay/README.md` (or tap **Me → Relay & connection → Get unlimited relay**).
+2. Click the **Deploy to Cloudflare** button. Cloudflare creates the database and deploys the relay for free.
+3. Paste the resulting `https://…workers.dev` URL into **Me → Relay & connection → Relay server** and tap **Save**.
+4. Tap **Share** to send the URL to the people you chat with. Everyone must use the same relay.
+
+The relay stores only encrypted envelopes and keeps the newest 1,000 messages per room.
+
 ## Verified badge
 
 - The developer profile `CM-6S29-CA2X` shows a blue verified check next to the name.
@@ -94,7 +105,8 @@ Tap a room chip in the **Chats** tab, or tap the room name in the top bar to ope
 ## Privacy
 
 - Messages and contacts are stored locally on your device.
-- Room and direct messages are delivered through a public relay (default: `ntfy.envs.net`), but the relay only receives **encrypted ciphertext**. Everyone you chat with must use the same relay; you can change it in **Me → Advanced**.
+- Room and direct messages are delivered through a relay (default: `ntfy.envs.net`), but the relay only receives **encrypted ciphertext**. Everyone you chat with must use the same relay; you can change it in **Me → Relay & connection**. For no daily message limit, deploy the free Community Relay (Cloudflare) from the `relay/` folder and paste its URL.
+- **Rooms:** AES-256-GCM with a key derived from the room code using PBKDF2. Anyone who knows the room code can decrypt the room, so use your own private room code for sensitive conversations. The preset rooms use public codes.
 - **Rooms:** AES-256-GCM with a key derived from the room code using PBKDF2. Anyone who knows the room code can decrypt the room, so use your own private room code for sensitive conversations. The preset rooms use public codes.
 - **Direct chats:** ECDH P-256 key exchange plus AES-256-GCM. Only you and your friend hold the private keys, so the relay and other users cannot read the messages.
 - Your private keys (chat and wallet) stay on your phone, but they are included in exported backups so you can restore them. Backups are encrypted with a passphrase; the plain option is clearly marked unsafe. Keep backup files secret.
@@ -114,6 +126,7 @@ This section is for users and store reviewers who want to verify what the plugin
 - **No remote code and no `eval`.** The plugin ships as plain JavaScript in `main.js`. It does not download or execute scripts. The only file it loads dynamically is the local `style.css` that comes in the same package.
 - **Network endpoints used:**
   - `https://ntfy.envs.net` (or a relay URL the user enters) — receives encrypted message envelopes, presence pings and public-key announcements. Message text, images, token receipts and airdrop claim keys are encrypted on the device before upload. Older builds used `ntfy.sh`, which has a low daily quota; the plugin migrates that default once.
+  - `relay/` in this repository is a self-hostable Cloudflare Worker + D1 relay (see `relay/README.md`) that uses the same protocol and has no daily message quota. A relay stores encrypted envelopes plus routing metadata (Community ID, display name, emoji, public key, timestamp).
   - `https://luckyai-blush.vercel.app/api/chat` — receives only the text you type in the **AI Room** to generate a reply. Nothing else is sent there.
   - `https://forno.celo.org` and `https://celo-rpc.publicnode.com` — public Celo RPC endpoints used to read balances and broadcast transactions you approve.
   - `https://celoscan.io` — only opened when you tap a transaction link.

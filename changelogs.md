@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.0
+- **Optional self-hosted relay with no daily message limit.** Added a complete Cloudflare Workers + D1 relay in the `relay/` folder of the repository. It speaks the same protocol as the public relay, so the plugin works with either. Click the **Deploy to Cloudflare** button in `relay/README.md` and Cloudflare creates the database and deploys it for free; paste the resulting `https://…workers.dev` URL into **Me → Relay & connection → Relay server** and tap Save.
+- **Relay tools in the app:** Test, Copy, Share, and Reset to default buttons in **Me → Relay & connection**, plus a **Get unlimited relay** button that opens the setup guide. Everyone you chat with must use the same relay; Share copies a short instruction message.
+- **No daily quota on a self-hosted relay.** The relay stores encrypted envelopes only and keeps the newest 1,000 messages per room.
+- Default relay remains `https://ntfy.envs.net` for new installs. Existing installs keep the relay they have chosen.
+
 ## 1.5.3
 - **Fixed messages not sending.** The old default relay (`ntfy.sh`) allows only 250 published messages per visitor per day, and the 60-second presence ping used all of them. Once the quota ran out, every send failed with HTTP 429.
 - The default relay is now **`https://ntfy.envs.net`**, a community ntfy server with a much larger daily allowance. Existing installs migrate from the old `ntfy.sh` default once; entering a relay manually in Me → Advanced still works and is kept.

@@ -1,0 +1,16 @@
+{
+  "name": "community-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted relay for the Community Chat Acode plugin",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy && wrangler d1 migrations apply DB --remote",
+    "db:local": "wrangler d1 migrations apply DB --local",
+    "test": "node test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.45.0"
+  }
+}

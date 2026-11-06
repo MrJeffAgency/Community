@@ -21,7 +21,7 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.5.3";
+  var VERSION = "1.6.0";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -31,6 +31,10 @@
      quota per visitor. Stored copies of that default are migrated once
      to DEFAULT_RELAY; a relay the user types in later is kept as-is. */
   var LEGACY_DEFAULT_RELAY = "https://ntfy.sh";
+  /* The relay folder in the repository is a complete Cloudflare Worker
+     with no daily message quota. The plugin cannot deploy it for the
+     user, so this opens the setup guide instead. */
+  var RELAY_GUIDE_URL = "https://github.com/MrJeffAgency/Community/tree/main/relay";
   var TOPIC_PREFIX = "acode-community-v1-";
   var THREAD_ACTION_ID = PLUGIN_ID + ".thread";
   var AI_ENDPOINT = "https://luckyai-blush.vercel.app/api/chat?message=";
@@ -2044,7 +2048,7 @@
       detail = String(body || "").trim();
     }
     if (status === 429) {
-      return "Relay is busy (daily message limit reached). Wait a moment and tap to retry, or change the relay in Me \u2192 Advanced.";
+      return "Relay is busy (daily message limit reached). Tap retry, or switch to your own relay in Me \u2192 Advanced \u2192 Relay & connection.";
     }
     if (status === 413) {
       return "That message is too large for the relay.";
@@ -3923,13 +3927,22 @@
       "</details>" +
 
       '<details class="cm-card">' +
-        "<summary>Advanced connection</summary>" +
+        "<summary>Relay &amp; connection</summary>" +
         '<label class="cm-label" for="cm-relay">Relay server</label>' +
         '<div class="cm-inline">' +
           '<input class="cm-input" id="cm-relay" data-role="relayinput" type="text" value="' + escapeHTML(state.settings.relay) + '" spellcheck="false">' +
           '<button type="button" class="cm-btn primary" data-action="save-relay">Save</button>' +
         "</div>" +
-        "<p>The default relay is ntfy.envs.net. Only change this if you have a compatible self-hosted relay. Everyone you chat with must use the same relay. Changing it clears the sync position.</p>" +
+        '<div class="cm-button-row">' +
+          '<button type="button" class="cm-btn" data-action="test-relay">Test</button>' +
+          '<button type="button" class="cm-btn" data-action="copy-relay">Copy</button>' +
+          '<button type="button" class="cm-btn" data-action="share-relay">Share</button>' +
+        "</div>" +
+        '<div class="cm-button-row">' +
+          '<button type="button" class="cm-btn" data-action="default-relay">Reset to default</button>' +
+          '<button type="button" class="cm-btn primary" data-action="relay-guide">Get unlimited relay</button>' +
+        "</div>" +
+        "<p>The default relay is <code>ntfy.envs.net</code>, a free public relay with a daily message limit. For no daily limit, deploy the free Community Relay (Cloudflare) and paste its URL above. Everyone you chat with must use the same relay. Changing it clears the sync position.</p>" +
       "</details>" +
 
       '<div class="cm-card">' +
@@ -4150,6 +4163,16 @@
       saveRoom();
     } else if (action === "save-relay") {
       saveRelay();
+    } else if (action === "test-relay") {
+      testRelay();
+    } else if (action === "copy-relay") {
+      copyRelay();
+    } else if (action === "share-relay") {
+      shareRelay();
+    } else if (action === "default-relay") {
+      resetRelay();
+    } else if (action === "relay-guide") {
+      openExplorerLink(RELAY_GUIDE_URL);
     } else if (action === "remove-contact") {
       removeContact(target.dataset.id);
     } else if (action === "thread-menu") {
@@ -4597,6 +4620,56 @@
     render();
     pollNow();
     toastMsg("Relay updated");
+  }
+
+  function testRelay() {
+    if (!state) return;
+    var base = relayBase();
+    toastMsg("Testing relay…", 1800);
+    fetchWithTimeout(base + "/v1/health", { cache: "no-store" }, 10000)
+      .then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.json().catch(function () { return {}; });
+      })
+      .then(function (data) {
+        if (data && data.healthy) {
+          toastMsg("✅ Relay is online: " + base, 5000);
+        } else {
+          toastMsg("Relay answered but did not report healthy.", 5000);
+        }
+      })
+      .catch(function (error) {
+        toastMsg("Relay check failed: " + (error && error.message ? error.message : String(error)), 6000);
+      });
+  }
+
+  function copyRelay() {
+    if (!state) return;
+    copyText(relayBase()).then(function (ok) {
+      toastMsg(ok ? "Relay URL copied. Friends must use the same relay." : "Could not copy the relay URL");
+    });
+  }
+
+  function shareRelay() {
+    if (!state) return;
+    var text = "Community Chat relay:\n" + relayBase() + "\n\n" +
+      "Open Community Chat → Me → Relay & connection → Relay server, paste this URL and tap Save. " +
+      "Everyone in the chat must use the same relay.\n\n" +
+      "No daily message limit: " + RELAY_GUIDE_URL;
+    copyText(text).then(function (ok) {
+      toastMsg(ok ? "Relay sharing text copied." : "Could not copy the relay sharing text");
+    });
+  }
+
+  function resetRelay() {
+    if (!state) return;
+    state.settings.relay = DEFAULT_RELAY;
+    state.cursors = {};
+    state.dmCursor = null;
+    saveState();
+    render();
+    pollNow();
+    toastMsg("Relay reset to " + DEFAULT_RELAY);
   }
 
   /* ------------------------------------------------------------------ *

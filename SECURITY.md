@@ -22,8 +22,9 @@ Nothing is uploaded to a developer server. There is no account system, no analyt
 | `https://luckyai-blush.vercel.app/api/chat` | Only the text typed in the AI Room | When you ask Lucky AI a question |
 | `https://forno.celo.org`, `https://celo-rpc.publicnode.com` | Public wallet address reads and signed transactions | When loading balances or sending funds |
 | `https://celoscan.io` | Nothing (opened as a normal link) | When you tap a transaction link |
+| `https://github.com/MrJeffAgency/Community` | Nothing (opened as a normal link) | When you tap **Get unlimited relay** in Me |
 
-Message text, images, token receipts and airdrop claim keys are encrypted on the device before they reach the relay. The relay stores ciphertext. Anyone who knows a public room code can decrypt that room, which is why private room codes are recommended for sensitive conversations.
+The `relay/` folder in this repository is a self-hostable Cloudflare Worker + D1 relay that speaks the same protocol. A relay stores encrypted envelopes plus routing metadata (Community ID, display name, emoji, public key, timestamp). Message text, images, token receipts and airdrop claim keys are encrypted on the device before they reach the relay. Anyone who knows a public room code can decrypt that room, which is why private room codes are recommended for sensitive conversations.
 
 ## Code execution
 

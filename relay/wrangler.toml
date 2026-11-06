@@ -1,0 +1,16 @@
+name = "community-relay"
+main = "worker.js"
+compatibility_date = "2026-11-06"
+workers_dev = true
+
+# The D1 database is provisioned automatically by Wrangler (>= 4.45)
+# and by the "Deploy to Cloudflare" button. Do not commit a real
+# database_id here: every deployment must get its own database.
+[[d1_databases]]
+binding = "DB"
+database_name = "community-relay"
+
+[vars]
+TOPIC_PREFIX = "acode-community-v1-"
+KEEP_PER_TOPIC = "1000"
+MAX_BODY_BYTES = "1048576"
