@@ -1,0 +1,13 @@
+{
+  "_help": "Android Builder settings. name = app name on the phone, id = package id, iconUrl = link to an icon image (or use the App icon button), versionName/versionCode = app version, minSdk/targetSdk = Android API levels (web apps), release = true builds a Play Store bundle (.aab), tv = true adds Android TV support (website and web apps), repo = GitHub repo used to build (blank = auto-create). Keep valid JSON.",
+  "repo": "MrJeffAgency/community-chat",
+  "iconUrl": "",
+  "release": false,
+  "tv": false,
+  "name": "Community Chat",
+  "id": "com.CommunityChat.myapp",
+  "versionName": "1.9.0",
+  "versionCode": 190,
+  "minSdk": 24,
+  "targetSdk": 34
+}
