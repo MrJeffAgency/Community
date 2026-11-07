@@ -31,6 +31,13 @@ Community Chat is designed for a phone in Acode, not a desktop page squeezed ont
 - **Me:** profile, ID, rooms, notifications and wallet are separate cards. Backup, privacy and advanced relay settings are collapsed so the page stays short.
 - **Dialogs:** on a phone, dialogs open as bottom sheets with full-width actions.
 
+## Install from GitHub (Remote)
+
+Settings → Plugins → + → REMOTE, then paste:
+
+https://raw.githubusercontent.com/MrJeffAgency/Community/main/Community_plugin.zip
+
+
 ## Rooms
 
 | Room | Purpose |
