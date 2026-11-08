@@ -1,5 +1,5 @@
 /* Community Chat — web app */
-const VERSION = "1.1.1";
+const VERSION = "1.1.2";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
@@ -285,6 +285,8 @@ function sanitizeAirdrop(value) {
   if (!/^[A-Za-z0-9$._-]{1,12}$/.test(symbol)) symbol = rawToken ? "TOKEN" : chain.native.symbol;
   var fundingTx = /^0x[0-9a-f]{64}$/i.test(String(value.fundingTx || "")) ? String(value.fundingTx).toLowerCase() : "";
   var claimedTx = /^0x[0-9a-f]{64}$/i.test(String(value.claimedTx || "")) ? String(value.claimedTx).toLowerCase() : "";
+  var maxClaims = isFinite(Number(value.maxClaims)) && Number(value.maxClaims) > 0 ? Math.floor(Number(value.maxClaims)) : 1;
+  var usedClaims = isFinite(Number(value.claimsUsed)) && Number(value.claimsUsed) > 0 ? Math.floor(Number(value.claimsUsed)) : 0;
   return {
     chain: chain.key,
     claimKey: claimKey,
@@ -294,7 +296,9 @@ function sanitizeAirdrop(value) {
     tokenAddress: rawToken ? rawToken.toLowerCase() : "",
     fundingTx: fundingTx,
     claimed: !!value.claimed || !!claimedTx,
-    claimedTx: claimedTx
+    claimedTx: claimedTx,
+    maxClaims: maxClaims,
+    claimsUsed: usedClaims
   };
 }
 function normalizeState(data) {
@@ -1201,7 +1205,9 @@ async function createAirdrop(options) {
     symbol: token ? token.symbol : chain.native.symbol,
     tokenAddress: token ? token.address : "",
     fundingTx: "",
-    stipendTx: ""
+    stipendTx: "",
+    maxClaims: isFinite(Number(options && options.maxClaims)) && Number(options.maxClaims) > 0 ? Math.floor(Number(options.maxClaims)) : 1,
+    claimsUsed: 0
   };
   if (!/^\d+(\.\d+)?$/.test(info.amount)) info.amount = formatAmount(amount, info.decimals);
 
@@ -1276,6 +1282,7 @@ async function claimAirdropById(id) {
   var airdrop = airdropForMessage(message);
   if (!message || !airdrop) return;
   if (airdrop.claimed || airdrop.claimedTx) { toast("This airdrop has already been claimed"); return; }
+  if (airdrop.maxClaims && (airdrop.claimsUsed || 0) >= airdrop.maxClaims) { toast("This airdrop has reached its claim limit of " + airdrop.maxClaims + " claimers"); return; }
   if (!state.wallet) { toast("Create or import a wallet first"); return; }
   var chain = walletChainByKey(airdrop.chain);
   if (!chain) { toast("This airdrop uses an unsupported network"); return; }
@@ -1293,6 +1300,8 @@ async function claimAirdropById(id) {
     });
     airdrop.claimed = true;
     airdrop.claimedTx = result.tx;
+    airdrop.claimedBy = state.wallet.address;
+    airdrop.claimsUsed = (airdrop.claimsUsed || 0) + 1;
     message.airdrop = airdrop;
     saveState();
     render();
@@ -1480,6 +1489,15 @@ function openSendTokenModal(post) {
   var amountInput = inputBox("0.0");
   amountInput.inputMode = "decimal";
   modal.body.appendChild(field("Amount", amountInput));
+  var maxField = el("div", "cm-field");
+  maxField.style.display = (post && delivery === "airdrop") ? "" : "none";
+  maxField.appendChild(el("label", "cm-label", "Max claims"));
+  var maxInput = inputBox("1");
+  maxInput.type = "number";
+  maxInput.min = "1";
+  maxInput.max = "1000";
+  maxField.appendChild(maxInput);
+  modal.body.appendChild(maxField);
   var info = el("p", "cm-muted", "");
   modal.body.appendChild(info);
 
@@ -1532,11 +1550,17 @@ function openSendTokenModal(post) {
     delivery = deliverySelect ? String(deliverySelect.value || "send") : "send";
     var isAirdrop = post && delivery === "airdrop";
     toField.style.display = isAirdrop ? "none" : "";
+    maxField.style.display = isAirdrop ? "" : "none";
     sendButton.textContent = isAirdrop ? "Create airdrop" : "Send";
     fillAssets();
     info.textContent = "";
     updateInfo();
-    if (isAirdrop) info.textContent += "\nAirdrop funding also pays a small gas stipend so the claimer can move the funds.";
+    if (isAirdrop) {
+      var maxClaimsNow = Number(maxInput.value);
+      var maxClaimsValid = isFinite(maxClaimsNow) && maxClaimsNow >= 1;
+      info.textContent += "\nAirdrop funding also pays a small gas stipend so the claimer can move the funds.";
+      if (maxClaimsValid) info.textContent += "\nUp to " + maxClaimsNow + (maxClaimsNow === 1 ? " person can claim this airdrop." : " people can claim this airdrop.") + ".";
+    }
   }
 
   var cancel = el("button", "cm-btn", "Cancel");
@@ -1554,10 +1578,11 @@ function openSendTokenModal(post) {
     if (amountRaw.lte(0)) { toast("Enter an amount greater than zero"); return; }
     modal.close();
     if (isAirdrop) {
+      var maxClaims = post && isAirdrop ? (isFinite(Number(maxInput.value)) && Number(maxInput.value) >= 1 ? Math.floor(Number(maxInput.value)) : 1) : 1;
       if (!window.confirm("Create an airdrop of " + amountText + " " + asset.symbol + " on " + active.name + "?\n\nThe first person in this chat to claim gets the tokens. This cannot be undone.")) return;
       toast("Funding the airdrop on " + active.name + "…", 9000);
       try {
-        var airdropInfo = await createAirdrop({ chainKey: active.key, token: asset.native ? null : asset, amountRaw: amountRaw, amountText: amountText });
+        var airdropInfo = await createAirdrop({ chainKey: active.key, token: asset.native ? null : asset, amountRaw: amountRaw, amountText: amountText, maxClaims: maxClaims });
         await sendMessage("", "", { airdrop: airdropInfo });
         toast("Airdrop posted. The first person to claim gets it.", 7000);
         refreshWallet(true);

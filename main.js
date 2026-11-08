@@ -749,6 +749,12 @@
     var claimedTx = /^0x[0-9a-f]{64}$/i.test(String(value.claimedTx || ""))
       ? String(value.claimedTx).toLowerCase()
       : "";
+    var maxClaims = isFinite(Number(value.maxClaims)) && Number(value.maxClaims) > 0
+      ? Math.floor(Number(value.maxClaims))
+      : 1;
+    var usedClaims = isFinite(Number(value.claimsUsed)) && Number(value.claimsUsed) > 0
+      ? Math.floor(Number(value.claimsUsed))
+      : 0;
     return {
       chain: chain.key,
       claimKey: claimKey,
@@ -758,7 +764,9 @@
       tokenAddress: rawToken ? rawToken.toLowerCase() : "",
       fundingTx: fundingTx,
       claimed: !!value.claimed || !!claimedTx,
-      claimedTx: claimedTx
+      claimedTx: claimedTx,
+      maxClaims: maxClaims,
+      claimsUsed: usedClaims
     };
   }
 
@@ -2819,7 +2827,11 @@
       symbol: token ? token.symbol : chain.native.symbol,
       tokenAddress: token ? token.address : "",
       fundingTx: "",
-      stipendTx: ""
+      stipendTx: "",
+      maxClaims: isFinite(Number(options && options.maxClaims)) && Number(options.maxClaims) > 0
+        ? Math.floor(Number(options.maxClaims))
+        : 1,
+      claimsUsed: 0
     };
     if (!/^\d+(\.\d+)?$/.test(info.amount)) {
       info.amount = formatUnits(amount, info.decimals);
@@ -2890,6 +2902,11 @@
       toastMsg("This airdrop has already been claimed");
       return;
     }
+    if (isFinite(Number(airdrop.maxClaims)) && Number(airdrop.maxClaims) > 0 &&
+        (Number(airdrop.claimsUsed) || 0) >= Number(airdrop.maxClaims)) {
+      toastMsg("This airdrop has reached its claim limit of " + airdrop.maxClaims + " claimers");
+      return;
+    }
     if (ui.claimingAirdrop) {
       toastMsg("A claim is already in progress");
       return;
@@ -2945,6 +2962,8 @@
         }).then(function (result) {
           airdrop.claimed = true;
           airdrop.claimedTx = result.tx;
+          airdrop.claimedBy = claimant;
+          airdrop.claimsUsed = (Number(airdrop.claimsUsed) || 0) + 1;
           saveState();
           toastMsg("✅ Claimed " + result.amount + " " + result.symbol + " on " +
             result.chainName + " · fee " + result.fee + " " + result.nativeSymbol, 8000);
@@ -2991,7 +3010,9 @@
         tokenAddress: info.tokenAddress || "",
         fundingTx: info.fundingTx || "",
         claimed: false,
-        claimedTx: ""
+        claimedTx: "",
+        maxClaims: info.maxClaims || 1,
+        claimsUsed: 0
       },
       ts: Date.now(),
       mine: true,
@@ -5866,6 +5887,18 @@
     amountField.appendChild(amountInput);
     modal.body.appendChild(amountField);
 
+    var maxField = cmEl("div", "cm-field");
+    maxField.style.display = (post && delivery === "airdrop") ? "" : "none";
+    maxField.appendChild(cmEl("label", "cm-label", "Max claims"));
+    var maxInput = cmEl("input", "cm-input");
+    maxInput.type = "number";
+    maxInput.min = 1;
+    maxInput.max = 1000;
+    maxInput.value = "1";
+    maxInput.autocomplete = "off";
+    maxField.appendChild(maxInput);
+    modal.body.appendChild(maxField);
+
     var info = cmEl("p", "cm-muted cm-tokeninfo", "");
     modal.body.appendChild(info);
 
@@ -5936,12 +5969,22 @@
       delivery = deliverySelect ? String(deliverySelect.value || "send") : "send";
       var isAirdrop = post && delivery === "airdrop";
       toField.style.display = isAirdrop ? "none" : "";
-      note.textContent = isAirdrop
-        ? "Airdrops use a temporary wallet funded by you. The first person in this chat to claim gets the funds. " +
-          "Unclaimed airdrops stay in that temporary wallet, so keep the claim key if the chat card cannot be posted. " +
-          "On-chain transfers are public and cannot be undone."
-        : "The transfer is signed on this phone and sent to the blockchain. It cannot be undone. " +
+      maxField.style.display = isAirdrop ? "" : "none";
+      if (isAirdrop) {
+        var maxClaimsNow = Number(maxInput.value);
+        var maxClaimsValid = isFinite(maxClaimsNow) && maxClaimsNow >= 1;
+        note.textContent = "Airdrops use a temporary wallet funded by you. The first person in this chat to claim gets the funds. ";
+        if (maxClaimsValid) {
+          note.textContent += maxClaimsNow === 1
+            ? " Up to 1 person can claim this airdrop."
+            : " Up to " + maxClaimsNow + " people can claim this airdrop.";
+        }
+        note.textContent += " Unclaimed airdrops stay in that temporary wallet, so keep the claim key if the chat card cannot be posted. ";
+        note.textContent += "On-chain transfers are public and cannot be undone.";
+      } else {
+        note.textContent = "The transfer is signed on this phone and sent to the blockchain. It cannot be undone. " +
           "The chat note is end-to-end encrypted, but the transfer itself is public on the blockchain.";
+      }
       send.textContent = isAirdrop ? "Create airdrop" : "Send";
       updateInfo();
     }
@@ -5985,7 +6028,8 @@
               chainKey: active.key,
               token: asset.native ? null : asset,
               amountRaw: amountRaw,
-              amountText: amountText
+              amountText: amountText,
+              maxClaims: isAirdrop ? (isFinite(Number(maxInput.value)) && Number(maxInput.value) >= 1 ? Math.floor(Number(maxInput.value)) : 1) : 1
             }, peerAtOpen, slugAtOpen).then(function (info) {
               postAirdropMessage(info, peerAtOpen, slugAtOpen);
               resetWalletView();

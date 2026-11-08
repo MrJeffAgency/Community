@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.9.2
+- Users can now set the **Max claims** when creating an airdrop in a room or direct chat. The creator enters how many people may claim the airdrop; the claim card and claim checks use that limit.
+
 ## 1.9.1
 - **Copy any message.** Every chat bubble now has a copy button that copies the message text, photo placeholder, token receipt or airdrop details to the clipboard.
 - **View user profiles.** Tap a person's name or avatar in a room message, or the chat header in a direct chat, to open their profile. It shows their Community ID, online status, verified badge and wallet address.
