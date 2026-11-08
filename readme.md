@@ -9,6 +9,8 @@ Community Chat is a private, local-first chat plugin for Acode with preset rooms
 - **AI Room**: Chat with **Lucky AI**, powered by `https://luckyai-blush.vercel.app/api/chat`. The assistant welcomes you and answers questions about coding, games, school work, ideas and Acode. Your question is sent to the AI service; replies stay on your phone and are not posted to the relay.
 - **Direct chats**: Add a friend with their Community ID to chat privately, one-to-one.
 - **Photo sharing**: Send photos in rooms and direct chats. Images are compressed on the device before sending, and tapping a photo opens it full size.
+- **Copy messages**: Tap the copy icon under any message to copy its text, photo placeholder, token receipt or airdrop details.
+- **User profiles**: Tap a person's name or avatar in a room, or the chat header in a direct chat, to view their profile. Copy their Community ID or wallet address, save their wallet for token sends, or jump into a direct chat.
 - **End-to-end encryption**: Relay messages are encrypted on your device. Rooms use AES-256-GCM with a key derived from the room code; direct chats use ECDH P-256 key exchange plus AES-256-GCM.
 - **Presence**: See who is online in the current room.
 - **Notifications**: Get a notification when a new message arrives.
@@ -30,6 +32,13 @@ Community Chat is designed for a phone in Acode, not a desktop page squeezed ont
 - **Composer:** photo and token buttons sit on the left, the message field grows as you type, and the send button is on the right. Photo and token buttons are hidden in the AI Room, where they do not apply.
 - **Me:** profile, ID, rooms, notifications and wallet are separate cards. Backup, privacy and advanced relay settings are collapsed so the page stays short.
 - **Dialogs:** on a phone, dialogs open as bottom sheets with full-width actions.
+
+## Install from GitHub (Remote)
+
+Settings → Plugins → + → REMOTE, then paste:
+
+https://raw.githubusercontent.com/MrJeffAgency/Community/main/Community_plugin.zip
+
 
 ## Rooms
 

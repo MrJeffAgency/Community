@@ -264,6 +264,44 @@ html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, -apple
 .cm-bubble.ai {
   border-color: var(--cm-accent);
 }
+.cm-clickable {
+  cursor: pointer;
+}
+.cm-clickable:active {
+  opacity: .72;
+}
+.cm-bubble-name.cm-clickable {
+  text-decoration: underline;
+}
+.cm-bubble-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+.cm-bubble.mine .cm-bubble-actions {
+  justify-content: flex-start;
+}
+.cm-copybtn {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: .7;
+  padding: 2px 0;
+  cursor: pointer;
+  text-decoration: underline;
+  min-height: 24px;
+}
+.cm-bubble.mine .cm-copybtn {
+  color: #fff;
+}
+.cm-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 .cm-msg-meta {
   font-size: 10px;
   opacity: .7;

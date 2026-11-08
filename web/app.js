@@ -1,5 +1,5 @@
 /* Community Chat — web app */
-const VERSION = "1.1.0";
+const VERSION = "1.1.1";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
@@ -404,7 +404,7 @@ async function publishPublicKey(force) {
   if (!force && state.crypto.publishedAt && now - state.crypto.publishedAt < 6 * 60 * 60 * 1000) return;
   await ensureIdentityKeys();
   if (!state.crypto.publicKey) return;
-  var env = { app: APP_TAG, v: ENVELOPE_VERSION, id: uid(), from: state.user.id, name: state.user.name, emoji: state.user.emoji, type: "key", ts: now, pk: state.crypto.publicKey };
+  var env = { app: APP_TAG, v: ENVELOPE_VERSION, id: uid(), from: state.user.id, name: state.user.name, emoji: state.user.emoji, type: "key", ts: now, pk: state.crypto.publicKey, wallet: state.wallet && isAddress(state.wallet.address) ? state.wallet.address : "" };
   await publish(env, dmTopicFor(state.user.id));
   state.crypto.publishedAt = now;
   saveState();
@@ -417,7 +417,7 @@ async function publishPresence(force) {
   presenceInFlight = true;
   lastPresenceAt = now;
   await ensureIdentityKeys();
-  var env = { app: APP_TAG, v: ENVELOPE_VERSION, id: uid(), from: state.user.id, name: state.user.name, emoji: state.user.emoji, type: "presence", ts: now };
+  var env = { app: APP_TAG, v: ENVELOPE_VERSION, id: uid(), from: state.user.id, name: state.user.name, emoji: state.user.emoji, type: "presence", ts: now, wallet: state.wallet && isAddress(state.wallet.address) ? state.wallet.address : "" };
   if (state.crypto.publicKey) env.pk = state.crypto.publicKey;
   try { await publish(env, topicFor(roomSlug())); } catch (e) { /* ignore */ }
   presenceInFlight = false;
@@ -615,6 +615,7 @@ function handleEnvelope(env) {
   if (name) contact.name = name;
   if (emoji) contact.emoji = emoji;
   if (env.pk) rememberPublicKey(from, env.pk);
+  if (!contact.wallet && env.wallet && isAddress(env.wallet)) contact.wallet = String(env.wallet);
   if (isPresence) { contact.lastSeen = ts; saveState(); render(); return; }
   if (isKey) { if (env.pk) rememberPublicKey(from, env.pk); saveState(); return; }
   if (isAiRoom() && to === "all") return;
@@ -649,7 +650,7 @@ async function decryptWireEnvelope(env) {
 }
 async function buildWireEnvelope(peer, text, image, extra) {
   var room = roomSlug();
-  var env = { app: APP_TAG, v: ENVELOPE_VERSION, id: uid(), from: state.user.id, name: state.user.name, emoji: state.user.emoji, to: peer === "community" ? "all" : peer, type: "secure", ts: Date.now() };
+  var env = { app: APP_TAG, v: ENVELOPE_VERSION, id: uid(), from: state.user.id, name: state.user.name, emoji: state.user.emoji, to: peer === "community" ? "all" : peer, type: "secure", ts: Date.now(), wallet: state.wallet && isAddress(state.wallet.address) ? state.wallet.address : "" };
   extra = extra || {};
   var plain = { text: text || "", image: image || "" };
   if (extra.token) plain.token = extra.token;
@@ -1242,6 +1243,34 @@ function findMessage(id) {
   for (var i = 0; i < thread.messages.length; i += 1) if (thread.messages[i].id === id) return thread.messages[i];
   return null;
 }
+function messageClipboardText(message) {
+  if (!message) return "";
+  var parts = [];
+  if (message.image) parts.push("[Photo]");
+  if (message.token) {
+    var chain = walletChainByKey(message.token.chain);
+    parts.push("💸 Sent " + message.token.amount + " " + message.token.symbol + " on " + (chain ? chain.name : message.token.chain));
+    if (message.token.to) parts.push("To: " + message.token.to);
+    if (message.token.tx) parts.push("Transaction: " + message.token.tx);
+  }
+  if (message.airdrop) {
+    var airdropChain = walletChainByKey(message.airdrop.chain);
+    parts.push("🎁 Airdrop: " + message.airdrop.amount + " " + message.airdrop.symbol + " on " + (airdropChain ? airdropChain.name : message.airdrop.chain));
+  }
+  if (message.text && !(message.image && message.text === "📷 Photo") &&
+      !(message.token && message.text.indexOf("💸") === 0) &&
+      !(message.airdrop && message.text.indexOf("🎁") === 0)) {
+    parts.push(message.text);
+  }
+  return parts.join("\n");
+}
+function copyMessage(id) {
+  var message = findMessage(id);
+  if (!message) return;
+  var text = messageClipboardText(message);
+  if (!text) { toast("This message has nothing to copy"); return; }
+  copyText(text).then(function (ok) { toast(ok ? "Message copied" : "Could not copy the message"); });
+}
 async function claimAirdropById(id) {
   var message = findMessage(id);
   var airdrop = airdropForMessage(message);
@@ -1296,6 +1325,94 @@ function openModal(title) {
   overlay.addEventListener("click", function (e) { if (e.target === overlay) close(); });
   return { body: body, actions: actions, close: close };
 }
+function openProfileModal(id) {
+  var profileId = normalizeId(id);
+  if (!profileId) return;
+  var isMe = profileId === state.user.id;
+  var contact = isMe ? null : state.contacts[profileId];
+  if (!isMe && !contact) {
+    contact = { id: profileId, name: defaultName(profileId), emoji: "🙂", publicKey: "", wallet: "", lastSeen: 0 };
+    state.contacts[profileId] = contact;
+  }
+  var name = isMe ? state.user.name : (contact ? contact.name : defaultName(profileId));
+  var emoji = isMe ? state.user.emoji : (contact ? contact.emoji : "🙂");
+  var wallet = isMe
+    ? (state.wallet && isAddress(state.wallet.address) ? state.wallet.address : "")
+    : (contact && isAddress(contact.wallet) ? contact.wallet : "");
+  var modal = openModal(isMe ? "Your profile" : "Profile");
+
+  var head = el("div", "cm-profile");
+  head.innerHTML = '<span class="cm-avatar">' + escapeHTML(emoji) + "</span>" +
+    '<div style="flex:1;min-width:0"><div class="cm-rowname">' + escapeHTML(name) +
+      (isMe ? "" : verifiedBadge(profileId)) + "</div>" +
+      '<div class="cm-rowsub">' + escapeHTML(isMe ? "This is you" : profileId) + "</div></div>";
+  modal.body.appendChild(head);
+
+  var idRow = el("div", "cm-inline");
+  idRow.style.marginTop = "12px";
+  idRow.appendChild(el("div", "cm-idbox", profileId));
+  var copyId = el("button", "cm-btn", "Copy ID");
+  copyId.type = "button";
+  copyId.onclick = function () { copyText(profileId).then(function (ok) { toast(ok ? "ID copied" : "Could not copy the ID"); }); };
+  idRow.appendChild(copyId);
+  modal.body.appendChild(idRow);
+
+  modal.body.appendChild(el("p", "cm-muted", isMe ? "Your wallet address" : "Wallet address"));
+  if (wallet) {
+    modal.body.appendChild(el("div", "cm-idbox", wallet));
+    var copyWallet = el("button", "cm-btn", "Copy wallet");
+    copyWallet.type = "button";
+    copyWallet.onclick = function () { copyText(wallet).then(function (ok) { toast(ok ? "Wallet address copied" : "Could not copy the wallet address"); }); };
+    modal.actions.appendChild(copyWallet);
+  } else {
+    modal.body.appendChild(el("p", "cm-muted", isMe ? "No wallet has been created on this phone yet." : "No wallet address shared yet."));
+  }
+
+  if (!isMe) {
+    var walletInput = inputBox("0x… (42 characters)", wallet);
+    walletInput.style.marginTop = "8px";
+    modal.body.appendChild(walletInput);
+  }
+
+  var closeBtn = el("button", "cm-btn", "Close");
+  closeBtn.type = "button";
+  closeBtn.onclick = modal.close;
+  modal.actions.appendChild(closeBtn);
+
+  if (isMe) {
+    var walletTab = el("button", "cm-btn primary", "Open wallet");
+    walletTab.type = "button";
+    walletTab.onclick = function () { modal.close(); ui.tab = "wallet"; ui.mode = "tabs"; render(); };
+    modal.actions.appendChild(walletTab);
+    return;
+  }
+
+  var messageBtn = el("button", "cm-btn", "Message");
+  messageBtn.type = "button";
+  messageBtn.onclick = function () { modal.close(); openThread(profileId); };
+  modal.actions.appendChild(messageBtn);
+
+  var saveWallet = el("button", "cm-btn primary", wallet ? "Change wallet" : "Save wallet");
+  saveWallet.type = "button";
+  saveWallet.onclick = function () {
+    var input = modal.body.querySelector("input");
+    var value = input ? String(input.value || "").trim() : "";
+    if (!value) {
+      if (contact) contact.wallet = "";
+      saveState();
+      modal.close();
+      toast("Friend wallet removed");
+      return;
+    }
+    if (!isAddress(value)) { toast("Enter a valid 0x wallet address (42 characters)"); return; }
+    if (contact) contact.wallet = window.ethers.utils.getAddress(value);
+    saveState();
+    modal.close();
+    toast("Friend wallet saved");
+  };
+  modal.actions.appendChild(saveWallet);
+}
+
 function field(labelText, control) {
   var wrap = el("div", "cm-field");
   wrap.appendChild(el("label", "cm-label", labelText));
@@ -1595,7 +1712,8 @@ function renderThread() {
   var msgs = thread ? thread.messages : [];
   var contact = !isCommunity ? state.contacts[peer] : null;
   var online = contact && contact.lastSeen && Date.now() - contact.lastSeen < ONLINE_MS;
-  var html = '<div class="cm-thread"><div class="cm-thread-head"><button class="cm-btn" data-action="back">←</button><div style="flex:1"><div class="cm-rowname">' + escapeHTML(name) + (isCommunity ? "" : verifiedBadge(peer)) + (online ? ' <span class="cm-online">online</span>' : "") + '</div><div class="cm-rowsub">' + (isCommunity ? escapeHTML(roomInfo(slug).desc) : escapeHTML(peer)) + "</div></div></div>";
+  var headInfo = '<div style="flex:1"' + (isCommunity ? "" : ' class="cm-clickable" data-action="view-profile" data-id="' + escapeHTML(peer) + '"') + '><div class="cm-rowname">' + escapeHTML(name) + (isCommunity ? "" : verifiedBadge(peer)) + (online ? ' <span class="cm-online">online</span>' : "") + '</div><div class="cm-rowsub">' + (isCommunity ? escapeHTML(roomInfo(slug).desc) : escapeHTML(peer)) + "</div></div>";
+  var html = '<div class="cm-thread"><div class="cm-thread-head"><button class="cm-btn" data-action="back">←</button>' + headInfo + '</div>';
   html += '<div class="cm-thread-msgs" id="msgs">';
   if (!msgs.length) {
     html += '<div class="cm-empty">' + (isCommunity && slug === "ai" ? "Ask Lucky AI anything. Replies are private to this app." : "No messages yet. Say hello!") + "</div>";
@@ -1604,7 +1722,7 @@ function renderThread() {
     var mine = m.from === state.user.id;
     var isAi = m.from === AI_ID;
     var bubble = '<div class="cm-bubble' + (mine ? " mine" : "") + (isAi ? " ai" : "") + '">';
-    if (!mine && !isCommunity && !isAi) bubble += '<div class="cm-bubble-name">' + escapeHTML(m.name || "Friend") + "</div>";
+    if (!mine && !isAi) bubble += '<div class="cm-bubble-name cm-clickable" data-action="view-profile" data-id="' + escapeHTML(m.from) + '">' + escapeHTML(m.name || "Friend") + verifiedBadge(m.from) + "</div>";
     if (m.image) bubble += '<img src="' + escapeHTML(m.image) + '" alt="Photo">';
     if (m.token) bubble += tokenCardHTML(m.token);
     else if (m.airdrop) bubble += airdropCardHTML(m);
@@ -1612,6 +1730,7 @@ function renderThread() {
     if (m.status === "failed") bubble += '<div class="cm-msg-error">Not sent' + (m.error ? ": " + escapeHTML(m.error) : "") + ' <button class="cm-linkbtn" data-action="retry" data-id="' + escapeHTML(m.id) + '">Retry</button></div>';
     else if (m.status === "sending") bubble += '<div class="cm-msg-meta">Sending…</div>';
     else if (m.unencrypted) bubble += '<div class="cm-msg-meta">🔓 unencrypted</div>';
+    bubble += '<div class="cm-bubble-actions"><button type="button" class="cm-copybtn" data-action="copy-message" data-id="' + escapeHTML(m.id) + '">Copy</button></div>';
     bubble += "</div>";
     html += bubble;
   });
@@ -1685,6 +1804,8 @@ function bindActions() {
       else if (action === "send-token") openSendTokenModal(true);
       else if (action === "claim-airdrop") claimAirdropById(node.dataset.id);
       else if (action === "open-tx") openExternal(node.dataset.url);
+      else if (action === "copy-message") copyMessage(node.dataset.id);
+      else if (action === "view-profile") openProfileModal(node.dataset.id);
       else if (action === "wallet-create") walletCreate();
       else if (action === "wallet-import") walletImport();
       else if (action === "wallet-copy") walletCopy();

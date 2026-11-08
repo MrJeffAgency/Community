@@ -450,6 +450,7 @@
       to: state.user.id,
       type: "key",
       pk: state.crypto.publicKey,
+      wallet: myWalletAddress(),
       ts: now
     };
 
@@ -477,6 +478,7 @@
       emoji: state.user.emoji,
       to: peer === "community" ? "all" : peer,
       type: "secure",
+      wallet: myWalletAddress(),
       ts: Date.now()
     };
 
@@ -1046,6 +1048,10 @@
 
   function walletSupported() {
     return !!(wBI && window.crypto && typeof window.crypto.getRandomValues === "function");
+  }
+
+  function myWalletAddress() {
+    return state && state.wallet && isAddress(state.wallet.address) ? state.wallet.address : "";
   }
 
   function wConst() {
@@ -2154,6 +2160,7 @@
         name: state.user.name,
         emoji: state.user.emoji,
         type: "presence",
+        wallet: myWalletAddress(),
         ts: now
       };
       if (state.crypto && state.crypto.publicKey) envelope.pk = state.crypto.publicKey;
@@ -2510,6 +2517,10 @@
     var contact = upsertContact(from, name, emoji, true);
     if (!contact) return;
     if (envelope.pk) rememberPublicKey(from, envelope.pk);
+    if (!contact.wallet && envelope.wallet) {
+      var sharedWallet = cleanWalletAddress(envelope.wallet);
+      if (sharedWallet) contact.wallet = sharedWallet;
+    }
 
     if (isPresence) {
       saveState();
@@ -3357,6 +3368,18 @@
     var avatar = $root.querySelector('[data-role="threadavatar"]');
     var name = $root.querySelector('[data-role="threadname"]');
     var sub = $root.querySelector('[data-role="threadsub"]');
+    var infoEl = $root.querySelector(".cm-threadinfo");
+    if (infoEl) {
+      if (ui.peer === "community") {
+        infoEl.removeAttribute("data-action");
+        infoEl.removeAttribute("data-id");
+        infoEl.classList.remove("cm-clickable");
+      } else {
+        infoEl.setAttribute("data-action", "view-profile");
+        infoEl.setAttribute("data-id", ui.peer);
+        infoEl.classList.add("cm-clickable");
+      }
+    }
     var thread = getThread(ui.peer, false);
 
     if (ui.peer === "community") {
@@ -3870,12 +3893,21 @@
     }
 
     var showAuthor = !mine && (ui.peer === "community" || isAi);
+    var canViewProfile = !mine && !isAi && !!normalizeId(message.from);
     var avatar = showAuthor
-      ? '<span class="cm-avatar cm-avatar-xs" style="--cm-avatar-bg:' + color + '">' +
-        escapeHTML(emoji) + "</span>"
+      ? (canViewProfile
+        ? '<button type="button" class="cm-avatar-btn cm-clickable" data-action="view-profile" data-id="' +
+          escapeHTML(message.from) + '" aria-label="View profile">' +
+          '<span class="cm-avatar cm-avatar-xs" style="--cm-avatar-bg:' + color + '">' +
+          escapeHTML(emoji) + "</span></button>"
+        : '<span class="cm-avatar cm-avatar-xs" style="--cm-avatar-bg:' + color + '">' +
+          escapeHTML(emoji) + "</span>")
       : "";
     var author = showAuthor
-      ? '<div class="cm-msgname">' + verifiedProfileNameHTML(message.from, name) + "</div>"
+      ? (canViewProfile
+        ? '<button type="button" class="cm-msgname cm-namebtn cm-clickable" data-action="view-profile" data-id="' +
+          escapeHTML(message.from) + '">' + verifiedProfileNameHTML(message.from, name) + "</button>"
+        : '<div class="cm-msgname">' + verifiedProfileNameHTML(message.from, name) + "</div>")
       : "";
 
     var bubble = "";
@@ -3902,7 +3934,10 @@
       '<div class="cm-bubblewrap">' + author +
         '<div class="cm-bubble' + (message.image ? " cm-bubble-media" : "") +
           (message.airdrop ? " cm-bubble-airdrop" : "") + '">' + bubble + "</div>" +
-        '<div class="cm-msgmeta"><span>' + escapeHTML(formatClock(message.ts)) + "</span>" + status + "</div>" +
+        '<div class="cm-msgmeta"><span>' + escapeHTML(formatClock(message.ts)) + "</span>" + status +
+          '<button type="button" class="cm-msgcopy" data-action="copy-message" data-id="' +
+          escapeHTML(message.id) + '" title="Copy message" aria-label="Copy message">' +
+          '<span class="icon content_copy"></span></button></div>' +
       "</div></div>";
   }
 
@@ -4334,6 +4369,10 @@
       openExplorerLink(target.dataset.url);
     } else if (action === "view-image") {
       openImageModal(target.dataset.id);
+    } else if (action === "view-profile") {
+      openProfileModal(target.dataset.id);
+    } else if (action === "copy-message") {
+      copyMessage(target.dataset.id);
     } else if (action === "send") {
       sendMessage();
     } else if (action === "retry") {
@@ -4609,6 +4648,43 @@
       if (thread.messages[i].id === messageId) return thread.messages[i];
     }
     return null;
+  }
+
+  function messageClipboardText(message) {
+    if (!message) return "";
+    var parts = [];
+    if (message.image) parts.push("[Photo]");
+    if (message.token) {
+      var chain = walletChainByKey(message.token.chain);
+      parts.push("💸 Sent " + message.token.amount + " " + message.token.symbol +
+        " on " + (chain ? chain.name : message.token.chain));
+      if (message.token.to) parts.push("To: " + message.token.to);
+      if (message.token.tx) parts.push("Transaction: " + message.token.tx);
+    }
+    if (message.airdrop) {
+      var airdropChain = walletChainByKey(message.airdrop.chain);
+      parts.push("🎁 Airdrop: " + message.airdrop.amount + " " + message.airdrop.symbol +
+        " on " + (airdropChain ? airdropChain.name : message.airdrop.chain));
+    }
+    if (message.text && !(message.image && message.text === "📷 Photo") &&
+        !(message.token && message.text === tokenText(message.token)) &&
+        !(message.airdrop && message.text === airdropText(message.airdrop))) {
+      parts.push(message.text);
+    }
+    return parts.join("\n");
+  }
+
+  function copyMessage(messageId) {
+    var message = findMessage(messageId);
+    if (!message) return;
+    var text = messageClipboardText(message);
+    if (!text) {
+      toastMsg("This message has nothing to copy");
+      return;
+    }
+    copyText(text).then(function (ok) {
+      toastMsg(ok ? "Message copied" : "Could not copy the message");
+    });
   }
 
   function openImageModal(messageId) {
@@ -5053,6 +5129,15 @@
       : "No wallet address saved for this friend yet.");
     modal.body.appendChild(walletText);
 
+    var profileBtn = document.createElement("button");
+    profileBtn.type = "button";
+    profileBtn.className = "cm-btn";
+    profileBtn.textContent = "View profile";
+    profileBtn.onclick = function () {
+      modal.close();
+      openProfileModal(peer);
+    };
+
     var walletBtn = document.createElement("button");
     walletBtn.type = "button";
     walletBtn.className = "cm-btn";
@@ -5090,10 +5175,104 @@
       removeContact(peer);
     };
 
+    modal.actions.appendChild(profileBtn);
     modal.actions.appendChild(walletBtn);
     modal.actions.appendChild(copyBtn);
     modal.actions.appendChild(clearBtn);
     modal.actions.appendChild(removeBtn);
+  }
+
+  function openProfileModal(id) {
+    if (!state) return;
+    var profileId = normalizeId(id);
+    if (!profileId) return;
+    var isMe = profileId === state.user.id;
+    var contact = isMe ? null : contactFor(profileId);
+    var name = isMe ? state.user.name : (contact ? displayName(contact) : defaultName(profileId));
+    var emoji = isMe ? state.user.emoji : (contact ? contact.emoji : emojiFor(profileId));
+    if (!isMe && !contact) contact = upsertContact(profileId, name, emoji, false);
+    var wallet = isMe
+      ? (state.wallet && isAddress(state.wallet.address) ? state.wallet.address : "")
+      : (contact && isAddress(contact.wallet) ? contact.wallet : "");
+    var modal = openModal(isMe ? "Your profile" : "Profile");
+
+    var header = cmEl("div", "cm-profile");
+    header.innerHTML = '<span class="cm-avatar cm-avatar-lg" style="--cm-avatar-bg:' +
+      colorFor(profileId) + '">' + escapeHTML(emoji) + "</span>" +
+      '<div class="cm-profile-main"><div class="cm-profile-name">' +
+        verifiedProfileNameHTML(profileId, name) + "</div>" +
+        '<div class="cm-profile-sub">' +
+          escapeHTML(isMe ? "This is you" : (isOnline(contact) ? "online" : "offline")) +
+          " · " + escapeHTML(profileId) + "</div></div>";
+    modal.body.appendChild(header);
+
+    var idRow = cmEl("div", "cm-idbox");
+    idRow.appendChild(cmEl("code", "", profileId));
+    var copyIdBtn = cmEl("button", "cm-chip", "Copy");
+    copyIdBtn.type = "button";
+    copyIdBtn.onclick = function () {
+      copyText(profileId).then(function (ok) {
+        toastMsg(ok ? "ID copied" : "Could not copy the ID");
+      });
+    };
+    idRow.appendChild(copyIdBtn);
+    modal.body.appendChild(idRow);
+
+    var walletBox = cmEl("div", "cm-profile-wallet");
+    walletBox.appendChild(cmEl("div", "cm-profile-wallet-label",
+      isMe ? "Your wallet address" : "Wallet address"));
+    if (wallet) {
+      walletBox.appendChild(cmEl("code", "", wallet));
+      var copyWalletBtn = cmEl("button", "cm-chip", "Copy wallet");
+      copyWalletBtn.type = "button";
+      copyWalletBtn.onclick = function () {
+        copyText(wallet).then(function (ok) {
+          toastMsg(ok ? "Wallet address copied" : "Could not copy the wallet address");
+        });
+      };
+      walletBox.appendChild(copyWalletBtn);
+    } else {
+      walletBox.appendChild(cmEl("div", "cm-muted",
+        isMe ? "No wallet has been created on this phone yet." : "No wallet address shared yet."));
+    }
+    modal.body.appendChild(walletBox);
+
+    if (!isMe) {
+      var verifiedText = cmEl("p", "cm-muted", isVerifiedId(profileId)
+        ? "Verified profile ✓"
+        : "This profile is not verified.");
+      modal.body.appendChild(verifiedText);
+    }
+
+    var closeBtn = cmEl("button", "cm-btn", "Close");
+    closeBtn.type = "button";
+    closeBtn.onclick = closeModal;
+    modal.actions.appendChild(closeBtn);
+
+    if (isMe) {
+      var walletTabBtn = cmEl("button", "cm-btn primary", "Open wallet");
+      walletTabBtn.type = "button";
+      walletTabBtn.onclick = function () {
+        modal.close();
+        switchTab("me");
+      };
+      modal.actions.appendChild(walletTabBtn);
+      return;
+    }
+
+    var messageBtn = cmEl("button", "cm-btn", "Message");
+    messageBtn.type = "button";
+    messageBtn.onclick = function () {
+      modal.close();
+      openThread(profileId);
+    };
+    var walletBtn = cmEl("button", "cm-btn primary", wallet ? "Change wallet" : "Save wallet");
+    walletBtn.type = "button";
+    walletBtn.onclick = function () {
+      editContactWallet(profileId);
+    };
+    modal.actions.appendChild(messageBtn);
+    modal.actions.appendChild(walletBtn);
   }
 
   function editContactWallet(peer) {

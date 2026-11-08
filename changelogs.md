@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.1
+- **Copy any message.** Every chat bubble now has a copy button that copies the message text, photo placeholder, token receipt or airdrop details to the clipboard.
+- **View user profiles.** Tap a person's name or avatar in a room message, or the chat header in a direct chat, to open their profile. It shows their Community ID, online status, verified badge and wallet address.
+- **Copy wallet addresses.** Profile windows and chat options now let you copy a user's wallet address, and save or change it for token sending.
+- Wallet addresses (never private keys) are shared securely with people you chat with, so their profile can show a copyable address. A manually saved friend wallet is never overwritten.
+- The APK web app received the same copy, profile and wallet-copy controls.
+
 ## 1.9.0
 - Replaced the dead Thunder network with **BSC** (Binance Smart Chain, chain ID 56) in the wallet. BSC uses BNB as the native gas token; bridged USDT, USDC, BTC and ETH are supported.
 - Added a **profile picture** to the wallet. Set it from a photo, or look up an NFT on-chain (paste a contract address and token ID; the plugin fetches the token URI and metadata). If none is set, a common default avatar is used.
