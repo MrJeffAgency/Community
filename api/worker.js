@@ -188,7 +188,7 @@ async function getUpdates(env, bot, url) {
   const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
   const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 50));
   const rows = await env.DB.prepare(
-    "SELECT id, chat_id, text, created_at FROM bot_messages WHERE bot_id = ? AND direction = 'in' AND id > ? ORDER BY id ASC LIMIT ?"
+    "SELECT id, chat_id, text, created_at FROM bot_messages WHERE bot_id = ? AND direction = 'in' AND id >= ? ORDER BY id ASC LIMIT ?"
   )
     .bind(bot.id, offset, limit)
     .all();
@@ -196,7 +196,126 @@ async function getUpdates(env, bot, url) {
     update_id: row.id,
     message: { chat_id: row.chat_id, text: row.text, date: Math.floor(row.created_at / 1000) }
   }));
-  return json({ ok: true, updates, next_offset: updates.length ? updates[updates.length - 1].update_id : offset });
+  return json({
+    ok: true,
+    updates,
+    // Telegram-style: next_offset is the first update id to return next time.
+    next_offset: updates.length ? updates[updates.length - 1].update_id + 1 : offset
+  });
+}
+
+async function saveItem(request, env, bot) {
+  const body = (await readJson(request)) || {};
+  const content = String(body.content == null ? "" : body.content).trim().slice(0, 10000);
+  if (!content) return fail(400, "content is required");
+  const chatId = String(body.chat_id || body.chatId || "").slice(0, 80);
+  const userId = String(body.user_id || body.userId || "").slice(0, 80);
+  const now = Date.now();
+  const result = await env.DB.prepare(
+    "INSERT INTO bot_storage (bot_id, chat_id, user_id, content, created_at) VALUES (?, ?, ?, ?, ?)"
+  )
+    .bind(bot.id, chatId, userId, content, now)
+    .run();
+  return json(
+    {
+      ok: true,
+      item: {
+        id: result.meta && result.meta.last_row_id ? result.meta.last_row_id : now,
+        content,
+        chat_id: chatId,
+        user_id: userId,
+        created_at: now
+      }
+    },
+    201
+  );
+}
+
+function storageItem(row) {
+  return {
+    id: row.id,
+    content: row.content,
+    chat_id: row.chat_id || "",
+    user_id: row.user_id || "",
+    created_at: row.created_at
+  };
+}
+
+async function listStorage(env, bot, url) {
+  const query = String(url.searchParams.get("q") || "").trim();
+  const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 50));
+  const statement = query
+    ? env.DB.prepare(
+        "SELECT id, content, chat_id, user_id, created_at FROM bot_storage WHERE bot_id = ? AND content LIKE ? ORDER BY id DESC LIMIT ?"
+      ).bind(bot.id, `%${query}%`, limit)
+    : env.DB.prepare(
+        "SELECT id, content, chat_id, user_id, created_at FROM bot_storage WHERE bot_id = ? ORDER BY id DESC LIMIT ?"
+      ).bind(bot.id, limit);
+  const rows = await statement.all();
+  const items = (rows.results || []).map(storageItem);
+  return json({ ok: true, query, count: items.length, items });
+}
+
+async function searchBot(env, bot, url) {
+  const query = String(url.searchParams.get("q") || "").trim();
+  if (!query) return fail(400, "q is required");
+  const limit = Math.min(50, Math.max(1, Number(url.searchParams.get("limit")) || 20));
+  const like = `%${query}%`;
+
+  const stored = await env.DB.prepare(
+    "SELECT id, content, chat_id, user_id, created_at FROM bot_storage WHERE bot_id = ? AND content LIKE ? ORDER BY id DESC LIMIT ?"
+  )
+    .bind(bot.id, like, limit)
+    .all();
+
+  const messages = await env.DB.prepare(
+    "SELECT id, chat_id, direction, text, created_at FROM bot_messages WHERE bot_id = ? AND text LIKE ? ORDER BY id DESC LIMIT ?"
+  )
+    .bind(bot.id, like, limit)
+    .all();
+
+  const items = [];
+  (stored.results || []).forEach((row) => {
+    items.push({ type: "stored", ...storageItem(row) });
+  });
+  (messages.results || []).forEach((row) => {
+    items.push({
+      type: "message",
+      id: row.id,
+      content: row.text,
+      chat_id: row.chat_id,
+      direction: row.direction,
+      created_at: row.created_at
+    });
+  });
+  items.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  return json({ ok: true, query, count: items.length, items: items.slice(0, limit * 2) });
+}
+
+async function getOutbox(env, bot, url) {
+  const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
+  const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 50));
+  const chatId = String(url.searchParams.get("chat_id") || "").trim();
+  const statement = chatId
+    ? env.DB.prepare(
+        "SELECT id, chat_id, text, created_at FROM bot_messages WHERE bot_id = ? AND direction = 'out' AND id > ? AND chat_id = ? ORDER BY id ASC LIMIT ?"
+      ).bind(bot.id, since, chatId, limit)
+    : env.DB.prepare(
+        "SELECT id, chat_id, text, created_at FROM bot_messages WHERE bot_id = ? AND direction = 'out' AND id > ? ORDER BY id ASC LIMIT ?"
+      ).bind(bot.id, since, limit);
+  const rows = await statement.all();
+  const messages = (rows.results || []).map((row) => ({
+    message_id: row.id,
+    chat_id: row.chat_id,
+    text: row.text,
+    date: Math.floor(row.created_at / 1000),
+    created_at: row.created_at
+  }));
+  return json({
+    ok: true,
+    messages,
+    next_since: messages.length ? messages[messages.length - 1].message_id : since
+  });
 }
 
 async function handle(request, env) {
@@ -253,6 +372,25 @@ async function handle(request, env) {
 
   if (path === "/v1/bots/me/getUpdates" && request.method === "GET") {
     return getUpdates(env, bot, url);
+  }
+
+  if (path === "/v1/bots/me/outbox" && request.method === "GET") {
+    return getOutbox(env, bot, url);
+  }
+
+  /* Storage + search helpers used by the Python SDK and by bot commands
+     like /search, /storage and /save. The short paths are aliases so a bot
+     can use whichever it prefers. */
+  if ((path === "/v1/bots/me/save" || path === "/save") && request.method === "POST") {
+    return saveItem(request, env, bot);
+  }
+
+  if ((path === "/v1/bots/me/storage" || path === "/storage") && request.method === "GET") {
+    return listStorage(env, bot, url);
+  }
+
+  if ((path === "/v1/bots/me/search" || path === "/search") && request.method === "GET") {
+    return searchBot(env, bot, url);
   }
 
   return fail(404, "not found");

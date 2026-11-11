@@ -23,3 +23,16 @@ CREATE TABLE IF NOT EXISTS bot_messages (
 
 CREATE INDEX IF NOT EXISTS idx_bot_messages_updates
   ON bot_messages (bot_id, direction, id);
+
+-- Free-form notes a bot saves with POST /v1/bots/me/save (aliases: /save).
+CREATE TABLE IF NOT EXISTS bot_storage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bot_id TEXT NOT NULL,
+  chat_id TEXT DEFAULT '',
+  user_id TEXT DEFAULT '',
+  content TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bot_storage_owner
+  ON bot_storage (bot_id, id);

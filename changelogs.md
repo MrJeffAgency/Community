@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.8
+- **Bot replies show up in the chat.** The plugin and the APK now collect messages that an API-backed bot writes with `sendMessage` (new `GET /v1/bots/me/outbox`) and append them to the bot's chat thread, so Python/Node bots talk back inside Community Chat.
+- **Python bot SDK.** Added `community-bot/community/` — a small `telegram.ext`-style SDK (`Update`, `Message.reply_text`, `Application.builder().token().build()`, `CommandHandler`, `ContextTypes`) that runs bots against the Community Bot API, plus a working example bot with `/search`, `/storage` and `/save`.
+- **Bot storage API.** New `POST /save`, `GET /storage`, `GET /search` (aliases under `/v1/bots/me/`) backed by a `bot_storage` table, authenticated with the bot token.
+- Fixed long-polling offsets so consecutive commands are never skipped.
+
 ## 1.9.7
 - **The Community API is live.** `https://community-bot-api.hdo-box.workers.dev` is deployed on Cloudflare (Worker + D1) and is now the default in **Me → Community bots**, so every new bot is registered there and gets a real `cmb_…` token plus `getUpdates`/`sendMessage` endpoints. Clear and save the field to keep bots phone-only.
 - Plugin version and APK version are now in sync (`1.9.7`).

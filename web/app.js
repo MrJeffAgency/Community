@@ -1,5 +1,5 @@
 /* Community Chat — web app */
-const VERSION = "1.1.6";
+const VERSION = "1.1.7";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
@@ -580,12 +580,70 @@ function pollNow() {
     saveState();
   }).catch(function () {});
   var verifiedPoll = pollVerified();
-  Promise.all([roomPoll, dmPoll, verifiedPoll]).then(function () {
+  var botPoll = pollBotOutbox();
+  Promise.all([roomPoll, dmPoll, verifiedPoll, botPoll]).then(function () {
     if (running) { ui.status = "online"; ui.lastSync = Date.now(); renderStatus(); }
   }).catch(function () {}).then(function () {
     pollInFlight = false;
     schedulePoll();
   });
+}
+/* ---------- Community bots: collect replies written through the API ---------- */
+var lastOutboxAt = 0;
+function pollBotOutbox() {
+  if (!running || !state || !Array.isArray(state.bots) || !state.bots.length) return Promise.resolve();
+  var base = apiBase();
+  if (!base) return Promise.resolve();
+  var now = Date.now();
+  if (lastOutboxAt && now - lastOutboxAt < 6000) return Promise.resolve();
+  lastOutboxAt = now;
+  var changed = false;
+  var jobs = [];
+  state.bots.forEach(function (bot) {
+    if (!bot || !bot.api || !bot.token) return;
+    var since = Number(bot.lastOut) || 0;
+    jobs.push(fetchWithTimeout(base + "/v1/bots/me/outbox?since=" + since, {
+      headers: { Authorization: "Bearer " + bot.token },
+      cache: "no-store"
+    }, 12000).then(function (r) { return r.ok ? r.json() : null; }).then(function (data) {
+      if (!data || !Array.isArray(data.messages) || !data.messages.length) return;
+      data.messages.forEach(function (raw) {
+        var chatId = normalizeId(raw.chat_id);
+        var text = String(raw.text || "");
+        if (!chatId || !text) return;
+        var key = "dm:" + chatId;
+        if (!state.threads[key]) state.threads[key] = { peer: chatId, room: roomSlug(), messages: [], unread: 0, lastTs: 0 };
+        var thread = state.threads[key];
+        var mid = "api-" + raw.message_id;
+        var exists = thread.messages.some(function (m) { return m.id === mid; });
+        if (exists) return;
+        var duplicate = thread.messages.some(function (m) {
+          return !m.mine && m.text === text && Math.abs((Number(m.ts) || 0) - (Number(raw.created_at) || 0)) < 20000;
+        });
+        if (duplicate) return;
+        thread.messages.push({
+          id: mid,
+          from: bot.id,
+          name: bot.name,
+          text: text,
+          image: "",
+          ts: Number(raw.created_at) || Date.now(),
+          mine: false,
+          status: "sent",
+          token: null,
+          airdrop: null
+        });
+        thread.lastTs = Number(raw.created_at) || Date.now();
+        if (!(ui.mode === "thread" && ui.peer === chatId)) thread.unread = (thread.unread || 0) + 1;
+        changed = true;
+      });
+      if (data.next_since) bot.lastOut = data.next_since;
+      if (data.messages.length) bot.apiAlive = true;
+      saveState();
+    }).catch(function () {}));
+  });
+  if (!jobs.length) return Promise.resolve();
+  return Promise.all(jobs).then(function () { if (changed) render(); });
 }
 function schedulePoll(delay) {
   if (!running) return;
@@ -957,7 +1015,9 @@ function cleanBotRecord(input) {
       return { command: String((item && item.command) || "").replace(/^\//, "").slice(0, 32), description: String((item && item.description) || "").slice(0, 256) };
     }).filter(function (item) { return item.command; }) : [],
     createdAt: Number(record.createdAt) || Date.now(),
-    api: !!record.api
+    api: !!record.api,
+    apiAlive: !!record.apiAlive,
+    lastOut: Math.max(0, Number(record.lastOut) || 0)
   };
 }
 function findBotById(id) {
@@ -1023,18 +1083,22 @@ function handleBotMessage(bot, text, thread) {
   saveState();
   render();
   var base = apiBase();
+  var sentToApi = false;
   if (base) {
+    sentToApi = true;
     fetchWithTimeout(base + "/v1/bots/" + encodeURIComponent(bot.username) + "/sendMessage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ from: state.user.id, text: clean }),
       cache: "no-store"
-    }, 12000).catch(function () {});
+    }, 12000).then(function (r) { return r.ok; }).catch(function () { return false; });
   }
-  thread.messages.push({ id: uid(), from: bot.id, name: bot.name, text: botReply(bot, clean), image: "", ts: Date.now(), mine: false, status: "sent", token: null, airdrop: null });
-  thread.lastTs = Date.now();
-  saveState();
-  render();
+  if (!sentToApi || !bot.api || !bot.apiAlive) {
+    thread.messages.push({ id: uid(), from: bot.id, name: bot.name, text: botReply(bot, clean), image: "", ts: Date.now(), mine: false, status: "sent", token: null, airdrop: null });
+    thread.lastTs = Date.now();
+    saveState();
+    render();
+  }
 }
 function apiBase() { return state && state.settings ? cleanRelay(state.settings.apiBase) : ""; }
 function registerBotWithApi(bot) {

@@ -21,7 +21,7 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.9.7";
+  var VERSION = "1.9.8";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -2519,8 +2519,9 @@
     });
 
     var verifiedPoll = pollVerified();
+    var botPoll = pollBotOutbox();
 
-    return Promise.all([roomPoll, dmPoll, verifiedPoll])
+    return Promise.all([roomPoll, dmPoll, verifiedPoll, botPoll])
       .then(function () {
         if (running) setStatus("online");
       })
@@ -2532,6 +2533,67 @@
         pollInFlight = false;
         schedulePoll();
       });
+  }
+
+  /* Replies written by an API-backed bot (see api/) arrive here. */
+  var lastOutboxAt = 0;
+  function pollBotOutbox() {
+    if (!running || !state || !Array.isArray(state.bots) || !state.bots.length) return Promise.resolve();
+    var base = apiBase();
+    if (!base) return Promise.resolve();
+    var now = Date.now();
+    if (lastOutboxAt && now - lastOutboxAt < 6000) return Promise.resolve();
+    lastOutboxAt = now;
+    var changed = false;
+    var jobs = [];
+    state.bots.forEach(function (bot) {
+      if (!bot || !bot.api || !bot.token) return;
+      var since = Number(bot.lastOut) || 0;
+      jobs.push(fetchWithTimeout(base + "/v1/bots/me/outbox?since=" + since, {
+        headers: { Authorization: "Bearer " + bot.token },
+        cache: "no-store"
+      }, 12000).then(function (response) {
+        return response.ok ? response.json() : null;
+      }).then(function (data) {
+        if (!state || !data || !Array.isArray(data.messages) || !data.messages.length) return;
+        data.messages.forEach(function (raw) {
+          var chatId = normalizeId(raw.chat_id);
+          var text = String(raw.text || "");
+          if (!chatId || !text) return;
+          var thread = getThread(chatId, true);
+          if (!thread) return;
+          var mid = "api-" + raw.message_id;
+          var exists = thread.messages.some(function (message) { return message.id === mid; });
+          if (exists) return;
+          var duplicate = thread.messages.some(function (message) {
+            return !message.mine && message.text === text &&
+              Math.abs((Number(message.ts) || 0) - (Number(raw.created_at) || 0)) < 20000;
+          });
+          if (duplicate) return;
+          thread.messages.push({
+            id: mid,
+            from: bot.id,
+            name: bot.name,
+            text: text,
+            ts: Number(raw.created_at) || Date.now(),
+            mine: false,
+            status: "sent"
+          });
+          thread.lastTs = Number(raw.created_at) || Date.now();
+          if (!(ui.mode === "thread" && ui.peer === chatId)) thread.unread = (thread.unread || 0) + 1;
+          changed = true;
+        });
+        if (data.next_since) bot.lastOut = data.next_since;
+        if (data.messages.length) bot.apiAlive = true;
+        saveState();
+      }).catch(function () {}));
+    });
+    if (!jobs.length) return Promise.resolve();
+    return Promise.all(jobs).then(function () {
+      if (!changed) return;
+      if (ui.mode === "thread") renderThreadMessages();
+      updateSidebar();
+    });
   }
 
   function schedulePoll(delay) {
@@ -3271,7 +3333,9 @@
         return { command: String((item && item.command) || "").replace(/^\//, "").slice(0, 32), description: String((item && item.description) || "").slice(0, 256) };
       }).filter(function (item) { return item.command; }) : [],
       createdAt: Number(record.createdAt) || Date.now(),
-      api: !!record.api
+      api: !!record.api,
+      apiAlive: !!record.apiAlive,
+      lastOut: Math.max(0, Number(record.lastOut) || 0)
     };
   }
 
@@ -3386,7 +3450,9 @@
     if (ui.mode === "thread" && ui.peer === thread.peer) renderThreadMessages(true);
 
     var base = apiBase();
+    var sentToApi = false;
     if (base) {
+      sentToApi = true;
       fetchWithTimeout(base + "/v1/bots/" + encodeURIComponent(bot.username) + "/sendMessage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3394,6 +3460,8 @@
         cache: "no-store"
       }, 12000).catch(function () {});
     }
+
+    if (sentToApi && bot.api && bot.apiAlive) return;
 
     var response = botReply(bot, clean);
     var botMsg = {
