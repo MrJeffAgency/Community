@@ -1,5 +1,5 @@
 /* Community Chat — web app */
-const VERSION = "1.1.4";
+const VERSION = "1.1.5";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
@@ -12,7 +12,8 @@ const AI_ENDPOINT = "https://luckyai-blush.vercel.app/api/chat?message=";
 const AI_ID = "CM-AI00-0000";
 const AI_NAME = "Lucky AI";
 const DEV_ID = "CM-6S29-CA2X";
-const BOTFATHER_ID = "CM-BOTFATHER";
+const BOTFATHER_ID = "CM-B0TF-0000";
+const DEV_UNLOCK_CODE = "COMMUNITY-ADMIN";
 const VERIFIED_IDS = [DEV_ID];
 const ENC_VERSION = "aes-gcm-v1";
 const ENC_AAD_ROOM = "acode-community-room-v1";
@@ -125,6 +126,7 @@ function sinceValue(c) { if (c && c.id) return c.id; if (c && c.ts) return Strin
 function escapeHTML(v) { return String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 function colorFor(id) { var h = 0; var s = String(id || ""); for (var i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0; return "hsl(" + (Math.abs(h) % 360) + ",60%,55%)"; }
 function isVerifiedId(id) { var n = normalizeId(id); return !!n && (VERIFIED_IDS.indexOf(n) !== -1 || (state && Array.isArray(state.verifiedIds) && state.verifiedIds.indexOf(n) !== -1)); }
+function isAdmin() { return !!state && (state.user.id === DEV_ID || (state.settings && state.settings.devMode === true)); }
 function verifiedBadge(id) { return isVerifiedId(id) ? '<span class="cm-verified" title="Verified">✓</span>' : ""; }
 function toast(msg, dur) { var t = document.createElement("div"); t.className = "cm-toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(function () { t.remove(); }, dur || 3000); }
 function readFileAsDataURL(file) { return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.onerror = rej; r.readAsDataURL(file); }); }
@@ -325,7 +327,11 @@ function normalizeState(data) {
       emoji: safeEmoji(c.emoji) || "🙂",
       publicKey: publicKey,
       wallet: isAddress(c.wallet) ? c.wallet : "",
-      lastSeen: Number(c.lastSeen) || 0
+      lastSeen: Number(c.lastSeen) || 0,
+      bot: !!c.bot,
+      username: String(c.username || "").slice(0, 40),
+      followers: Array.isArray(c.followers) ? c.followers.map(normalizeId).filter(Boolean).slice(0, 200) : [],
+      following: Array.isArray(c.following) ? c.following.map(normalizeId).filter(Boolean).slice(0, 200) : []
     };
   });
 
@@ -384,7 +390,14 @@ function normalizeState(data) {
     var id = normalizeId(value);
     if (id && id !== userId && following.indexOf(id) === -1) following.push(id);
   });
-  var bots = Array.isArray(input.bots) ? input.bots.slice(0, 50) : [];
+  var bots = [];
+  var botsInput = Array.isArray(input.bots) ? input.bots : [];
+  botsInput.slice(0, 50).forEach(function (value) {
+    var record = cleanBotRecord(value);
+    if (!record.username) return;
+    var duplicate = bots.some(function (item) { return item.username === record.username || item.id === record.id; });
+    if (!duplicate) bots.push(record);
+  });
 
   return {
     schema: 2,
@@ -393,7 +406,9 @@ function normalizeState(data) {
       room: room,
       relay: relay,
       notify: settingsInput.notify !== false,
-      hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : ""
+      hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : "",
+      devMode: settingsInput.devMode === true,
+      apiBase: cleanRelay(settingsInput.apiBase)
     },
     contacts: contacts,
     threads: threads,
@@ -439,7 +454,7 @@ async function publishPresence(force) {
   presenceInFlight = true;
   lastPresenceAt = now;
   await ensureIdentityKeys();
-  var env = { app: APP_TAG, v: ENVELOPE_VERSION, id: uid(), from: state.user.id, name: state.user.name, emoji: state.user.emoji, type: "presence", ts: now, wallet: state.wallet && isAddress(state.wallet.address) ? state.wallet.address : "" };
+  var env = { app: APP_TAG, v: ENVELOPE_VERSION, id: uid(), from: state.user.id, name: state.user.name, emoji: state.user.emoji, type: "presence", ts: now, wallet: state.wallet && isAddress(state.wallet.address) ? state.wallet.address : "", followers: (state.followers || []).slice(0, 200), following: (state.following || []).slice(0, 200) };
   if (state.crypto.publicKey) env.pk = state.crypto.publicKey;
   try { await publish(env, topicFor(roomSlug())); } catch (e) { /* ignore */ }
   presenceInFlight = false;
@@ -616,6 +631,76 @@ function pollVerified() {
   }).catch(function () {});
 }
 
+/* ---------- admin / verified ---------- */
+function publishVerifiedGrant(target) {
+  var id = normalizeId(target);
+  if (!id) return Promise.resolve(false);
+  return publish({ app: APP_TAG, v: ENVELOPE_VERSION, id: uid(), from: state.settings.devMode ? DEV_ID : state.user.id, type: "verify-grant", target: id, ts: Date.now() }, VERIFIED_TOPIC).then(function () {
+    if (!state.verifiedIds) state.verifiedIds = [];
+    if (state.verifiedIds.indexOf(id) === -1) state.verifiedIds.push(id);
+    saveState();
+    render();
+    return true;
+  });
+}
+function publishVerifiedRevoke(target) {
+  var id = normalizeId(target);
+  if (!id) return Promise.resolve(false);
+  return publish({ app: APP_TAG, v: ENVELOPE_VERSION, id: uid(), from: state.settings.devMode ? DEV_ID : state.user.id, type: "verify-revoke", target: id, ts: Date.now() }, VERIFIED_TOPIC).then(function () {
+    if (state.verifiedIds) {
+      var index = state.verifiedIds.indexOf(id);
+      if (index !== -1) state.verifiedIds.splice(index, 1);
+    }
+    saveState();
+    render();
+    return true;
+  });
+}
+function grantVerified() {
+  if (!state || !isAdmin()) { toast("Admin mode is not on"); return; }
+  var input = document.getElementById("verifyTarget");
+  var id = normalizeId(input && input.value);
+  if (!id) { toast("Enter a profile ID like CM-ABCD-1234"); return; }
+  if (id === DEV_ID) { toast("The developer profile is already verified"); return; }
+  publishVerifiedGrant(id).then(function () {
+    if (input) input.value = "";
+    toast("Verified badge granted to " + id);
+  }).catch(function (e) {
+    toast("Could not grant: " + (e && e.message ? e.message : String(e)), 6000);
+  });
+}
+function revokeVerified(id) {
+  if (!state || !isAdmin()) { toast("Admin mode is not on"); return; }
+  var target = normalizeId(id);
+  if (!target) return;
+  publishVerifiedRevoke(target).then(function () { toast("Badge removed from " + target); }).catch(function (e) { toast("Could not remove: " + (e && e.message ? e.message : String(e)), 6000); });
+}
+function saveApiBase() {
+  if (!state) return;
+  var input = document.getElementById("apiInput");
+  var value = cleanRelay(input && input.value);
+  state.settings.apiBase = value;
+  saveState();
+  render();
+  toast(value ? "Bot API saved" : "Bot API cleared");
+}
+function unlockDev() {
+  if (!state) return;
+  var input = document.getElementById("devCode");
+  if (String(input && input.value).trim() !== DEV_UNLOCK_CODE) { toast("Wrong admin code"); return; }
+  state.settings.devMode = true;
+  saveState();
+  render();
+  toast("Admin mode unlocked");
+}
+function lockDev() {
+  if (!state) return;
+  state.settings.devMode = false;
+  saveState();
+  render();
+  toast("Admin mode off");
+}
+
 /* ---------- incoming ---------- */
 function handleEnvelope(env) {
   if (!state || !env || typeof env !== "object") return;
@@ -638,7 +723,19 @@ function handleEnvelope(env) {
   if (emoji) contact.emoji = emoji;
   if (env.pk) rememberPublicKey(from, env.pk);
   if (!contact.wallet && env.wallet && isAddress(env.wallet)) contact.wallet = String(env.wallet);
-  if (isPresence) { contact.lastSeen = ts; saveState(); render(); return; }
+  if (isPresence) {
+    contact.lastSeen = ts;
+    if (Array.isArray(env.followers)) contact.followers = env.followers.map(normalizeId).filter(Boolean).slice(0, 200);
+    if (Array.isArray(env.following)) {
+      contact.following = env.following.map(normalizeId).filter(Boolean).slice(0, 200);
+      if (!state.followers) state.followers = [];
+      var followsMe = contact.following.indexOf(state.user.id) !== -1;
+      var idx = state.followers.indexOf(from);
+      if (followsMe && idx === -1) state.followers.push(from);
+      if (!followsMe && idx !== -1) state.followers.splice(idx, 1);
+    }
+    saveState(); render(); return;
+  }
   if (isKey) { if (env.pk) rememberPublicKey(from, env.pk); saveState(); return; }
   if (isAiRoom() && to === "all") return;
   if (env.enc === ENC_VERSION) {
@@ -766,6 +863,11 @@ async function sendMessage(text, image, extra) {
     handleBotFather(text, thread);
     return;
   }
+  var botPeer = findBotById(peer);
+  if (botPeer) {
+    handleBotMessage(botPeer, text, thread);
+    return;
+  }
   var msgId = uid();
   var now = Date.now();
   var img = image || "";
@@ -808,23 +910,157 @@ async function sendMessage(text, image, extra) {
 function openBotFather() {
   if (!state) return;
   if (!state.contacts[BOTFATHER_ID]) state.contacts[BOTFATHER_ID] = { id: BOTFATHER_ID, name: "BotFather", emoji: "🤖", publicKey: "", wallet: "", lastSeen: 0 };
+  state.contacts[BOTFATHER_ID].bot = true;
   if (!state.threads["dm:" + BOTFATHER_ID]) state.threads["dm:" + BOTFATHER_ID] = { peer: BOTFATHER_ID, room: roomSlug(), messages: [], unread: 0, lastTs: 0 };
+  var thread = state.threads["dm:" + BOTFATHER_ID];
+  if (!thread.messages.length) {
+    thread.messages.push({ id: uid(), from: BOTFATHER_ID, name: "BotFather", text: "I'm BotFather. I create and manage Community bots.\n\nType /help to see every command.", image: "", ts: Date.now(), mine: false, status: "sent", token: null, airdrop: null });
+    thread.lastTs = Date.now();
+  }
   ui.peer = BOTFATHER_ID;
   ui.mode = "thread";
   ui.tab = "chats";
+  saveState();
   render();
   toast("BotFather is ready. Type /help for commands.", 4000);
+}
+function randomBotToken() {
+  var out = "";
+  for (var i = 0; i < 4; i += 1) out += Math.random().toString(36).slice(2, 10).toUpperCase();
+  return "BOT-" + out;
+}
+function generateBotId() {
+  var alphabet = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+  function part(size) { var out = ""; for (var i = 0; i < size; i += 1) out += alphabet.charAt(Math.floor(Math.random() * alphabet.length)); return out; }
+  return "CM-B0T" + Math.floor(Math.random() * 10) + "-" + part(4);
+}
+function newBotId() {
+  var id = generateBotId();
+  while (findBotById(id)) id = generateBotId();
+  return id;
+}
+function cleanBotRecord(input) {
+  var record = input && typeof input === "object" ? input : {};
+  var username = String(record.username || "").replace(/^@/, "").slice(0, 40);
+  var name = String(record.name || username || "Community Bot").slice(0, 64);
+  var id = normalizeId(record.id) || generateBotId();
+  var token = String(record.token || "");
+  if (token.length < 20) token = randomBotToken();
+  return {
+    id: id,
+    name: name,
+    username: username,
+    token: token,
+    description: String(record.description || "").slice(0, 500),
+    commands: Array.isArray(record.commands) ? record.commands.slice(0, 50).map(function (item) {
+      return { command: String((item && item.command) || "").replace(/^\//, "").slice(0, 32), description: String((item && item.description) || "").slice(0, 256) };
+    }).filter(function (item) { return item.command; }) : [],
+    createdAt: Number(record.createdAt) || Date.now(),
+    api: !!record.api
+  };
+}
+function findBotById(id) {
+  if (!state || !state.bots) return null;
+  var target = normalizeId(id);
+  if (!target) return null;
+  for (var i = 0; i < state.bots.length; i += 1) if (state.bots[i] && normalizeId(state.bots[i].id) === target) return state.bots[i];
+  return null;
+}
+function findBotByUsername(username) {
+  if (!state || !state.bots) return null;
+  var name = String(username || "").replace(/^@/, "").toLowerCase();
+  for (var i = 0; i < state.bots.length; i += 1) if (state.bots[i] && String(state.bots[i].username || "").toLowerCase() === name) return state.bots[i];
+  return null;
+}
+function ensureBotContact(bot) {
+  if (!state || !bot || !normalizeId(bot.id)) return null;
+  var contact = state.contacts[bot.id];
+  if (!contact) {
+    contact = state.contacts[bot.id] = { id: bot.id, name: bot.name, emoji: "🤖", publicKey: "", wallet: "", lastSeen: 0 };
+  }
+  contact.name = bot.name;
+  contact.bot = true;
+  contact.username = bot.username;
+  var key = "dm:" + bot.id;
+  if (!state.threads[key]) state.threads[key] = { peer: bot.id, room: roomSlug(), messages: [], unread: 0, lastTs: 0 };
+  var thread = state.threads[key];
+  if (!thread.messages.length) {
+    thread.messages.push({ id: uid(), from: bot.id, name: bot.name, text: "Hi! I'm @" + bot.username + ".\n\n" + (bot.description || "I am a Community bot.") + "\n\nType /start to see my commands, or /help for help.", image: "", ts: Date.now(), mine: false, status: "sent", token: null, airdrop: null });
+    thread.lastTs = Date.now();
+  }
+  return contact;
+}
+function botCommandList(bot) {
+  var commands = Array.isArray(bot && bot.commands) ? bot.commands : [];
+  if (!commands.length) return "/start - Start the bot\n/help - Show help";
+  return commands.map(function (item) { return "/" + item.command + " - " + (item.description || "No description"); }).join("\n");
+}
+function botReply(bot, text) {
+  var clean = String(text || "").trim();
+  var lower = clean.toLowerCase();
+  var commands = Array.isArray(bot && bot.commands) ? bot.commands : [];
+  if (!clean || lower === "/start") {
+    return "👋 Welcome to @" + bot.username + "!\n\n" + (bot.description || "I am a Community bot.") + "\n\nCommands:\n" + botCommandList(bot);
+  }
+  if (lower === "/help") return "Commands:\n" + botCommandList(bot);
+  if (clean.charAt(0) === "/") {
+    var name = clean.slice(1).split(/\s+/)[0].toLowerCase();
+    for (var i = 0; i < commands.length; i += 1) if (String(commands[i].command || "").toLowerCase() === name) return commands[i].description || commands[i].reply || "OK";
+    return "Unknown command. Try /help.";
+  }
+  if (bot.description) return bot.description + "\n\nType /help for commands.";
+  return "Hi! I'm @" + bot.username + ". Type /help for my commands.";
+}
+function handleBotMessage(bot, text, thread) {
+  if (!state || !bot || !thread) return;
+  var clean = String(text || "").trim();
+  if (!clean) return;
+  var now = Date.now();
+  thread.messages.push({ id: uid(), from: state.user.id, name: state.user.name, text: clean, ts: now, mine: true, status: "sent", token: null, airdrop: null });
+  thread.lastTs = now;
+  thread.unread = 0;
+  saveState();
+  render();
+  var base = apiBase();
+  if (base) {
+    fetchWithTimeout(base + "/v1/bots/" + encodeURIComponent(bot.username) + "/sendMessage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from: state.user.id, text: clean }),
+      cache: "no-store"
+    }, 12000).catch(function () {});
+  }
+  thread.messages.push({ id: uid(), from: bot.id, name: bot.name, text: botReply(bot, clean), image: "", ts: Date.now(), mine: false, status: "sent", token: null, airdrop: null });
+  thread.lastTs = Date.now();
+  saveState();
+  render();
+}
+function apiBase() { return cleanRelay(state && state.settings && state.settings.apiBase); }
+function registerBotWithApi(bot) {
+  var base = apiBase();
+  if (!base || !bot) return Promise.resolve(null);
+  return fetchWithTimeout(base + "/v1/bots", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: bot.name, username: bot.username, owner: state.user.id }), cache: "no-store" }, 15000)
+    .then(function (r) { return r.json().catch(function () { return null; }); })
+    .then(function (data) {
+      if (!data || !data.bot || !data.bot.token) return null;
+      bot.token = String(data.bot.token);
+      if (data.bot.id) bot.id = String(data.bot.id);
+      bot.api = true;
+      saveState();
+      return bot;
+    }).catch(function () { return null; });
 }
 function botFatherReply(text) {
   if (!state.bots) state.bots = [];
   var clean = String(text || "").trim();
   var lower = clean.toLowerCase();
   if (!clean || lower === "/start" || lower === "/help") {
-    return "BotFather commands:\n" +
+    return "I'm BotFather. I create and manage Community bots.\n\n" +
       "/newbot <name> <username> - create a bot\n" +
       "/mybots - list your bots\n" +
       "/token <username> - show a bot token\n" +
       "/setcommands <username> <cmd:description,...> - set commands\n" +
+      "/setdescription <username> <text> - set the bot description\n" +
       "/deletebot <username> - delete a bot\n" +
       "Example: /newbot MyBot my_bot";
   }
@@ -832,40 +1068,54 @@ function botFatherReply(text) {
   var command = parts[0].toLowerCase();
   if (command === "/newbot") {
     var name = parts[1] || "My Bot";
-    var username = parts[2] || ("bot_" + Math.random().toString(36).slice(2, 8));
-    if (state.bots.some(function (b) { return b.username === username; })) return "That username is already used. Pick another one.";
-    var token = "BOT-" + Math.random().toString(36).slice(2, 12).toUpperCase() + Math.random().toString(36).slice(2, 12).toUpperCase() + Math.random().toString(36).slice(2, 12).toUpperCase();
-    state.bots.push({ name: name, username: username, token: token, commands: [], createdAt: Date.now() });
+    var username = (parts[2] || ("bot_" + Math.random().toString(36).slice(2, 8))).replace(/^@/, "");
+    if (findBotByUsername(username)) return "That username is already used. Pick another one.";
+    var bot = { id: newBotId(), name: name, username: username, token: randomBotToken(), description: "I am " + name + ".", commands: [], createdAt: Date.now() };
+    state.bots.push(bot);
+    ensureBotContact(bot);
     saveState();
-    return "Done. Bot created:\nName: " + name + "\nUsername: @" + username + "\nToken: " + token + "\nUse /setcommands " + username + " to add commands.";
+    registerBotWithApi(bot);
+    return "Done! Bot created:\nName: " + name + "\nUsername: @" + username + "\nCommunity ID: " + bot.id + "\nToken: " + bot.token + "\n\nOpen Chats and tap @" + username + " to DM it. Use /setcommands " + username + " start:Say hello,help:Show help to add commands.";
   }
   if (command === "/mybots") {
     if (!state.bots.length) return "You have no bots yet. Use /newbot to create one.";
-    return "Your bots:\n" + state.bots.map(function (b) { return "@" + b.username + " - " + b.name + " (" + (b.commands ? b.commands.length : 0) + " commands)"; }).join("\n");
+    return "Your bots:\n" + state.bots.map(function (b) { return "@" + b.username + " (" + b.id + ") - " + b.name + " · " + (b.commands ? b.commands.length : 0) + " commands"; }).join("\n");
   }
   if (command === "/token") {
-    var bot = state.bots.find(function (b) { return b.username === parts[1]; });
-    if (!bot) return "Bot not found. Use /mybots.";
-    return "Token for @" + bot.username + ": " + bot.token;
+    var tokenBot = findBotByUsername(parts[1]);
+    if (!tokenBot) return "Bot not found. Use /mybots.";
+    return "Token for @" + tokenBot.username + ":\n" + tokenBot.token + "\n\nRun it in a terminal with the Community Bot API.";
   }
   if (command === "/setcommands") {
-    var bot2 = state.bots.find(function (b) { return b.username === parts[1]; });
-    if (!bot2) return "Bot not found. Use /mybots.";
+    var cmdBot = findBotByUsername(parts[1]);
+    if (!cmdBot) return "Bot not found. Use /mybots.";
     var commandList = parts.slice(2).join(" ");
     if (!commandList) return "Usage: /setcommands <username> start:Say hello,help:Show help";
-    bot2.commands = commandList.split(",").map(function (item) {
+    cmdBot.commands = commandList.split(",").map(function (item) {
       var pieces = item.split(":");
       return { command: (pieces[0] || "").trim(), description: (pieces.slice(1).join(":") || "").trim() };
     }).filter(function (item) { return item.command; });
     saveState();
-    return "Commands updated for @" + bot2.username + ": " + bot2.commands.map(function (c) { return "/" + c.command; }).join(", ");
+    return "Commands updated for @" + cmdBot.username + ":\n" + botCommandList(cmdBot);
+  }
+  if (command === "/setdescription") {
+    var descBot = findBotByUsername(parts[1]);
+    if (!descBot) return "Bot not found. Use /mybots.";
+    var description = parts.slice(2).join(" ").trim();
+    if (!description) return "Usage: /setdescription <username> <text>";
+    descBot.description = description;
+    saveState();
+    return "Description updated for @" + descBot.username + ".";
   }
   if (command === "/deletebot") {
-    var index = state.bots.findIndex(function (b) { return b.username === parts[1]; });
-    if (index === -1) return "Bot not found. Use /mybots.";
-    var deleted = state.bots.splice(index, 1)[0];
+    var deleteBot = findBotByUsername(parts[1]);
+    if (!deleteBot) return "Bot not found. Use /mybots.";
+    var index = state.bots.indexOf(deleteBot);
+    if (index !== -1) state.bots.splice(index, 1);
+    if (state.contacts[deleteBot.id]) state.contacts[deleteBot.id].bot = false;
+    delete state.threads["dm:" + deleteBot.id];
     saveState();
-    return "Deleted @" + deleted.username + ".";
+    return "Deleted @" + deleteBot.username + ".";
   }
   return "I did not understand that command. Type /help for the list.";
 }
@@ -1485,7 +1735,7 @@ function openProfileModal(id) {
   }
 
   if (!isMe) {
-    var followInfo = el("p", "cm-muted", "Followers: " + (state.followers ? state.followers.length : 0) + " · Following: " + (state.following ? state.following.length : 0));
+    var followInfo = el("p", "cm-muted", "Followers: " + (contact && contact.followers ? contact.followers.length : 0) + " · Following: " + (contact && contact.following ? contact.following.length : 0));
     modal.body.appendChild(followInfo);
     var followBtn = el("button", "cm-btn", (state.following && state.following.indexOf(profileId) !== -1) ? "Unfollow" : "Follow");
     followBtn.type = "button";
@@ -1494,6 +1744,7 @@ function openProfileModal(id) {
       var index = state.following.indexOf(profileId);
       if (index === -1) state.following.push(profileId); else state.following.splice(index, 1);
       saveState();
+      publishPresence(true);
       modal.close();
       openProfileModal(profileId);
     };
@@ -1728,6 +1979,35 @@ function openSendTokenModal(post) {
   applyDelivery();
 }
 
+function applySearch() {
+  var input = document.getElementById("searchInput");
+  var q = String(input && input.value || "").trim().toLowerCase();
+  if (ui.mode === "thread") {
+    var msgs = document.getElementById("msgs");
+    if (!msgs) return;
+    var visible = 0;
+    msgs.querySelectorAll(".cm-bubble").forEach(function (node) {
+      var show = !q || node.textContent.toLowerCase().indexOf(q) !== -1;
+      node.style.display = show ? "" : "none";
+      if (show) visible += 1;
+    });
+    var note = document.getElementById("searchEmpty");
+    if (q && !visible) {
+      if (!note) { note = document.createElement("div"); note.id = "searchEmpty"; note.className = "cm-empty"; msgs.appendChild(note); }
+      note.textContent = "No messages match \"" + q + "\".";
+      note.style.display = "";
+    } else if (note) {
+      note.style.display = "none";
+    }
+  } else {
+    var scope = document.querySelector(".cm-content");
+    if (!scope) return;
+    scope.querySelectorAll(".cm-row, .cm-botrow").forEach(function (node) {
+      node.style.display = (!q || node.textContent.toLowerCase().indexOf(q) !== -1) ? "" : "none";
+    });
+  }
+}
+
 /* ---------- render ---------- */
 function render() {
   if (!$root) return;
@@ -1745,6 +2025,9 @@ function renderTabs() {
   html += '<div class="cm-tabs">' + tabs.map(function (t) {
     return '<button class="cm-tab' + (ui.tab === t ? " active" : "") + '" data-tab="' + t + '">' + labels[t] + "</button>";
   }).join("") + "</div>";
+  if (ui.tab === "chats" || ui.tab === "people") {
+    html += '<div class="cm-searchbar"><span class="cm-search-ico">🔍</span><input id="searchInput" type="search" placeholder="Search chats and people" oninput="applySearch()"></div>';
+  }
   html += '<div class="cm-content">';
   if (ui.tab === "chats") html += renderChats();
   else if (ui.tab === "people") html += renderPeople();
@@ -1798,14 +2081,38 @@ function renderPeople() {
     var online = c.lastSeen && Date.now() - c.lastSeen < ONLINE_MS;
     html += '<div class="cm-row" data-action="open-dm" data-id="' + escapeHTML(id) + '"><span class="cm-avatar">' + escapeHTML(c.emoji) + '</span><div style="flex:1"><div class="cm-rowname">' + escapeHTML(c.name) + verifiedBadge(id) + (online ? ' <span class="cm-online">online</span>' : "") + '</div><div class="cm-rowsub">' + escapeHTML(id) + "</div></div></div>";
   });
-  html += '<div class="cm-card" style="margin-top:12px"><h3>Verified badge</h3><p class="cm-muted">' + (state.user.id === DEV_ID ? "Your developer profile is verified." : "Message " + DEV_ID + " to request a badge. Include your ID " + state.user.id + ".") + "</p>" + (state.user.id !== DEV_ID ? '<div class="cm-btn-row"><button class="cm-btn primary" data-action="message-dev">Message developer</button></div>' : "") + "</div>";
+  html += '<div class="cm-card" style="margin-top:12px"><h3>Verified badge</h3>';
+  if (isAdmin()) {
+    html += '<p class="cm-muted">Admin mode is on. Grant or remove the blue check for a profile ID.</p>';
+    html += '<div class="cm-inline"><input class="cm-input" id="verifyTarget" placeholder="CM-XXXX-XXXX"><button class="cm-btn primary" data-action="grant-verified">Grant</button></div>';
+    if (state.verifiedIds && state.verifiedIds.length) {
+      html += '<div class="cm-btn-row">' + state.verifiedIds.map(function (id) {
+        return '<button class="cm-btn danger" data-action="revoke-verified" data-id="' + escapeHTML(id) + '">Remove ' + escapeHTML(id) + "</button>";
+      }).join("") + "</div>";
+    } else {
+      html += '<p class="cm-muted">No profiles verified yet.</p>';
+    }
+  } else {
+    html += '<p class="cm-muted">' + (state.user.id === DEV_ID ? "Your developer profile is verified." : "Message " + DEV_ID + " to request a badge. Include your ID " + state.user.id + ".") + "</p>";
+    if (state.user.id !== DEV_ID) html += '<div class="cm-btn-row"><button class="cm-btn primary" data-action="message-dev">Message developer</button></div>';
+  }
+  html += "</div>";
   return html;
 }
 function renderMe() {
   var html = '<div class="cm-card"><h3>Profile</h3><div class="cm-inline"><input class="cm-input" id="nameInput" value="' + escapeHTML(state.user.name) + '"><button class="cm-btn primary" data-action="save-name">Save</button></div><p class="cm-muted">ID: <span class="cm-idbox">' + escapeHTML(state.user.id) + '</span></p><div class="cm-btn-row"><button class="cm-btn" data-action="copy-id">Copy ID</button></div></div>';
   html += '<div class="cm-card"><h3>Relay</h3><div class="cm-inline"><input class="cm-input" id="relayInput" value="' + escapeHTML(state.settings.relay) + '"><button class="cm-btn primary" data-action="save-relay">Save</button></div><p class="cm-muted">Default: community-relay.hdo-box.workers.dev. Everyone must use the same relay.</p></div>';
   html += '<div class="cm-card"><h3>Followers & following</h3><p class="cm-muted">Followers: ' + (state.followers ? state.followers.length : 0) + " · Following: " + (state.following ? state.following.length : 0) + "</p></div>";
-  html += '<div class="cm-card"><h3>Community bots</h3><p class="cm-muted">Open BotFather to create bots and set commands.</p><div class="cm-btn-row"><button class="cm-btn primary" data-action="open-botfather">Open BotFather</button></div></div>';
+  html += '<div class="cm-card"><h3>Community bots</h3><p class="cm-muted">Open BotFather to create bots, set commands and get a token. Tap a bot to DM it.</p><div class="cm-btn-row"><button class="cm-btn primary" data-action="open-botfather">Open BotFather</button></div>';
+  if (state.bots && state.bots.length) {
+    html += '<div class="cm-botlist">' + state.bots.map(function (bot) {
+      return '<button class="cm-botrow" data-action="open-bot" data-id="' + escapeHTML(bot.id) + '"><span class="cm-avatar" style="width:34px;height:34px;font-size:17px">🤖</span><span class="cm-botrow-main"><b>@' + escapeHTML(bot.username) + '</b><small>' + escapeHTML(bot.name) + " · " + escapeHTML(bot.id) + '</small></span><span class="cm-botrow-go">›</span></button>';
+    }).join("") + "</div>";
+  }
+  html += '<label class="cm-label" for="apiInput">Community Bot API base URL (optional)</label><div class="cm-inline"><input class="cm-input" id="apiInput" value="' + escapeHTML(state.settings.apiBase || "") + '" placeholder="https://community-api.example.workers.dev"><button class="cm-btn primary" data-action="save-api">Save</button></div><p class="cm-muted">BotFather registers bots with this API when set.</p></div>';
+  html += '<div class="cm-card"><h3>Admin</h3>' + (isAdmin()
+    ? '<p class="cm-muted">Admin mode is ON' + (state.user.id === DEV_ID ? "" : " (unlocked)") + '. Grant verified badges in People.</p><div class="cm-btn-row"><button class="cm-btn danger" data-action="lock-dev">Turn off admin mode</button></div>'
+    : '<p class="cm-muted">Enter the admin code to unlock verified-badge tools.</p><div class="cm-inline"><input class="cm-input" id="devCode" type="password" placeholder="Admin code"><button class="cm-btn primary" data-action="unlock-dev">Unlock</button></div>') + "</div>";
   html += '<div class="cm-card"><h3>About</h3><p class="cm-muted">Community Chat web v' + VERSION + " · " + escapeHTML(ui.status || "") + '</p><p class="cm-muted">Made for Acode. Send feedback or ask for a verified badge by messaging ' + escapeHTML(DEV_ID) + " from the People tab.</p></div>";
   return html;
 }
@@ -1858,6 +2165,7 @@ function renderThread() {
   var online = contact && contact.lastSeen && Date.now() - contact.lastSeen < ONLINE_MS;
   var headInfo = '<div style="flex:1"' + (isCommunity ? "" : ' class="cm-clickable" data-action="view-profile" data-id="' + escapeHTML(peer) + '"') + '><div class="cm-rowname">' + escapeHTML(name) + (isCommunity ? "" : verifiedBadge(peer)) + (online ? ' <span class="cm-online">online</span>' : "") + '</div><div class="cm-rowsub">' + (isCommunity ? escapeHTML(roomInfo(slug).desc) : escapeHTML(peer)) + "</div></div>";
   var html = '<div class="cm-thread"><div class="cm-thread-head"><button class="cm-btn" data-action="back">←</button>' + headInfo + '</div>';
+  html += '<div class="cm-searchbar cm-searchbar-thread"><span class="cm-search-ico">🔍</span><input id="searchInput" type="search" placeholder="Search this chat" oninput="applySearch()"></div>';
   html += '<div class="cm-thread-msgs" id="msgs">';
   if (!msgs.length) {
     html += '<div class="cm-empty">' + (isCommunity && slug === "ai" ? "Ask Lucky AI anything. Replies are private to this app." : "No messages yet. Say hello!") + "</div>";
@@ -1951,6 +2259,12 @@ function bindActions() {
       else if (action === "copy-message") copyMessage(node.dataset.id);
       else if (action === "view-profile") openProfileModal(node.dataset.id);
       else if (action === "open-botfather") openBotFather();
+      else if (action === "open-bot") openThread(node.dataset.id);
+      else if (action === "save-api") saveApiBase();
+      else if (action === "unlock-dev") unlockDev();
+      else if (action === "lock-dev") lockDev();
+      else if (action === "grant-verified") grantVerified();
+      else if (action === "revoke-verified") revokeVerified(node.dataset.id);
       else if (action === "wallet-create") walletCreate();
       else if (action === "wallet-import") walletImport();
       else if (action === "wallet-copy") walletCopy();
@@ -1986,6 +2300,7 @@ document.getElementById("fileInput").addEventListener("change", function (e) {
 /* ---------- boot ---------- */
 async function boot() {
   state = loadState();
+  (state.bots || []).forEach(function (bot) { ensureBotContact(bot); });
   await ensureIdentityKeys();
   publishPublicKey(true).catch(function () {});
   $root = document.getElementById("app");

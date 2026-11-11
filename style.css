@@ -1890,3 +1890,110 @@ select.cm-select {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ---------- Telegram-style polish ---------- */
+
+.cm-searchbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--cm-border);
+  background: var(--cm-bg);
+}
+
+.cm-searchbar .icon {
+  font-size: 18px;
+  color: var(--cm-muted);
+}
+
+.cm-searchinput {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid var(--cm-border);
+  border-radius: 20px;
+  background: var(--cm-card-solid);
+  color: var(--cm-text);
+  font-size: 15px;
+  outline: none;
+}
+
+.cm-searchinput:focus {
+  border-color: var(--cm-accent);
+}
+
+.cm-messages {
+  background: var(--cm-bg);
+}
+
+.cm-bubble {
+  border-radius: 15px 15px 15px 5px;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.12);
+}
+
+.cm-msg.mine .cm-bubble {
+  border-radius: 15px 15px 5px 15px;
+}
+
+.cm-msgmeta {
+  font-size: 10px;
+}
+
+.cm-msgcopy {
+  opacity: 0.55;
+}
+
+.cm-msgcopy:active {
+  opacity: 1;
+}
+
+.cm-botlist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.cm-botrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--cm-border);
+  border-radius: 12px;
+  background: var(--cm-card);
+  color: var(--cm-text);
+  text-align: left;
+}
+
+.cm-botrow:active {
+  background: var(--cm-accent-soft);
+}
+
+.cm-botrow-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cm-botrow-main b {
+  font-size: 14px;
+}
+
+.cm-botrow-main small {
+  color: var(--cm-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cm-botrow-go {
+  font-size: 20px;
+  opacity: 0.5;
+}

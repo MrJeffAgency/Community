@@ -11,13 +11,17 @@ Community Chat is a private, local-first chat plugin for Acode with preset rooms
 - **Photo sharing**: Send photos in rooms and direct chats. Images are compressed on the device before sending, and tapping a photo opens it full size.
 - **Copy messages**: Tap the copy icon under any message to copy its text, photo placeholder, token receipt or airdrop details.
 - **User profiles**: Tap a person's name or avatar in a room, or the chat header in a direct chat, to view their profile. Copy their Community ID or wallet address, save their wallet for token sends, or jump into a direct chat.
+- **Followers & following**: Follow or unfollow someone from their profile. Counts show on profiles and in **Me**, and are shared with presence.
+- **Search**: Search chats and people from the Chats/People tabs, and search messages inside a chat.
+- **Community bots**: Open **Me → Community bots → BotFather** to create Telegram-style bots with a real Community ID, token, description and commands. Tap a bot to DM it; it answers `/start`, `/help` and its commands.
+- **Community Bot API**: The optional `api/` Worker + D1 service gives bots a real HTTP API (`sendMessage`, `getUpdates`, token rotation). Set its URL in **Me → Community bots** and BotFather registers new bots there.
 - **End-to-end encryption**: Relay messages are encrypted on your device. Rooms use AES-256-GCM with a key derived from the room code; direct chats use ECDH P-256 key exchange plus AES-256-GCM.
 - **Presence**: See who is online in the current room.
 - **Notifications**: Get a notification when a new message arrives.
 - **Celo wallet**: Every user (new and existing) gets a Celo wallet, created on the phone. The **Me** tab shows the address and live balances for **CELO**, **G$**, **USDT**, **USDC**, **HDO** and **BTC** (bridged WBTC), with copy, refresh and private-key backup.
 - **Token transfers**: Send tokens to any `0x` wallet address from the wallet, or tap the coin button in a room or direct chat to send and post an encrypted receipt card. Public preset rooms are HDO-only; private room codes and direct chats can send CELO, USDT, USDC, HDO and BTC. Token sending is unavailable in the AI Room.
 - **Room airdrops**: In a room or direct chat, choose **Airdrop** instead of a wallet address. The plugin funds a temporary claim wallet and posts an encrypted gift card; the first person to tap **Claim to my wallet** moves the tokens to their own address. Airdrops are unavailable in the AI Room.
-- **Verified badge**: Profile `CM-6S29-CA2X` is marked with a blue verified check. Anyone who needs a verified badge can message the developer at that ID from **People → Verified badge**.
+- **Verified badge**: Profile `CM-6S29-CA2X` is marked with a blue verified check. Admins grant or remove the badge in **People → Verified badge**. If the developer reinstalls and gets a new ID, unlock admin mode from **Me → Admin** with the admin code.
 - **Encrypted backup**: Export your chats, contacts and wallet key protected by a passphrase (PBKDF2 + AES-256-GCM).
 - **Safety number**: In a direct chat, open Chat options and compare the safety number with your friend to confirm nobody is impersonating them.
 
