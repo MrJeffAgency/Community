@@ -2182,7 +2182,7 @@ function renderGames() {
   state.games.forEach(function (g, idx) {
     html += '<div class="cm-row" style="flex-direction:column;align-items:stretch;gap:6px">' +
       '<div><b>' + escapeHTML(g.name) + '</b> <span class="cm-muted">(' + escapeHTML(g.type) + ')</span></div>' +
-      '<div class="cm-muted">Stake: ' + escapeHTML(g.stake) + ' HDO · plays: ' + g.plays + ' · by ' + escapeHTML(g.creator || "anon") + '</div>' +
+      '<div class="cm-muted">Stake: ' + escapeHTML(g.stake) + ' HDO · plays: ' + g.plays + ' · by ' + escapeHTML(g.creator || "anon") + ' · status: ' + (g.status || 'open') + '</div>' +
       '<div class="cm-btn-row"><button class="cm-btn primary" data-action="play-game" data-id="' + escapeHTML(g.id) + '">Play</button><button class="cm-btn" data-action="delete-game" data-id="' + escapeHTML(g.id) + '">Delete</button></div>' +
       '</div>';
   });
