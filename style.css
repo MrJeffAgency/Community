@@ -1997,3 +1997,98 @@ select.cm-select {
   font-size: 20px;
   opacity: 0.5;
 }
+
+/* ---------- Chat search toggle + wallpapers ---------- */
+
+.cm-searchbar[hidden] {
+  display: none;
+}
+
+.cm-wallpapers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cm-wallpaper {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--cm-border);
+  border-radius: var(--cm-radius-sm);
+  background: var(--cm-card-solid);
+  color: var(--cm-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cm-wallpaper.active {
+  border-color: var(--cm-accent);
+  box-shadow: 0 0 0 2px var(--cm-accent-soft);
+}
+
+.cm-wallpaper-name {
+  text-align: center;
+  line-height: 1.2;
+}
+
+.cm-wallpaper-swatch {
+  display: block;
+  height: 48px;
+  border-radius: calc(var(--cm-radius-sm) - 3px);
+  border: 1px solid var(--cm-border);
+  background-color: var(--cm-bg);
+}
+
+/* Wallpapers tint the active theme colour instead of replacing it, so
+   message bubbles and text keep their normal contrast in light and dark. */
+.cm-wallpaper-swatch[data-swatch="pattern"],
+.cm-app[data-wallpaper="pattern"] .cm-messages {
+  background-color: var(--cm-bg);
+  background-image: radial-gradient(color-mix(in srgb, var(--cm-text) 13%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.cm-wallpaper-swatch[data-swatch="sky"],
+.cm-app[data-wallpaper="sky"] .cm-messages {
+  background-color: var(--cm-bg);
+  background-image: linear-gradient(180deg,
+      color-mix(in srgb, #3390ec 26%, var(--cm-bg)),
+      color-mix(in srgb, #3390ec 9%, var(--cm-bg))),
+    radial-gradient(color-mix(in srgb, var(--cm-text) 10%, transparent) 1px, transparent 1px);
+  background-size: auto, 24px 24px;
+}
+
+.cm-wallpaper-swatch[data-swatch="mint"],
+.cm-app[data-wallpaper="mint"] .cm-messages {
+  background-color: var(--cm-bg);
+  background-image: linear-gradient(180deg,
+      color-mix(in srgb, #2fbf82 24%, var(--cm-bg)),
+      color-mix(in srgb, #2fbf82 8%, var(--cm-bg))),
+    radial-gradient(color-mix(in srgb, var(--cm-text) 10%, transparent) 1px, transparent 1px);
+  background-size: auto, 24px 24px;
+}
+
+.cm-wallpaper-swatch[data-swatch="sunset"],
+.cm-app[data-wallpaper="sunset"] .cm-messages {
+  background-color: var(--cm-bg);
+  background-image: linear-gradient(180deg,
+      color-mix(in srgb, #ff9d4d 30%, var(--cm-bg)),
+      color-mix(in srgb, #ff5d73 14%, var(--cm-bg))),
+    radial-gradient(color-mix(in srgb, var(--cm-text) 10%, transparent) 1px, transparent 1px);
+  background-size: auto, 24px 24px;
+}
+
+.cm-wallpaper-swatch[data-swatch="night"],
+.cm-app[data-wallpaper="night"] .cm-messages {
+  background-color: var(--cm-bg);
+  background-image: linear-gradient(180deg,
+      color-mix(in srgb, #46508f 42%, var(--cm-bg)),
+      color-mix(in srgb, #0b1020 68%, var(--cm-bg))),
+    radial-gradient(color-mix(in srgb, #ffffff 22%, transparent) 1px, transparent 1px);
+  background-size: auto, 28px 28px;
+}

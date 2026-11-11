@@ -21,7 +21,7 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.9.9";
+  var VERSION = "1.9.10";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -143,6 +143,7 @@
     sendingToken: false,
     claimingAirdrop: false,
     search: "",
+    searchOpen: false,
     wallet: { data: null, loading: false, error: "", at: 0 }
   };
 
@@ -1872,6 +1873,7 @@
         notify: settingsInput.notify !== false,
         hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : "",
         devMode: settingsInput.devMode === true,
+        chatWallpaper: ["pattern", "sky", "mint", "sunset", "night"].indexOf(settingsInput.chatWallpaper) === -1 ? "pattern" : settingsInput.chatWallpaper,
         apiBase: settingsInput.apiBase == null ? DEFAULT_API : cleanRelay(settingsInput.apiBase)
       },
       contacts: contacts,
@@ -3725,6 +3727,7 @@
           '<div class="cm-threadname" data-role="threadname">Community</div>' +
           '<div class="cm-threadsub" data-role="threadsub">#general</div>' +
         '</div>' +
+        '<button type="button" class="cm-iconbtn" data-action="toggle-search" title="Search this chat" aria-label="Search this chat"><span class="icon search"></span></button>' +
         '<button type="button" class="cm-iconbtn" data-action="thread-menu" title="Chat options" aria-label="Chat options"><span class="icon more_vert"></span></button>' +
       '</div>' +
       '<div class="cm-searchbar" data-role="searchbar" hidden>' +
@@ -3824,9 +3827,11 @@
     $root.querySelector('[data-role="tabs"]').hidden = threadMode;
     $root.querySelector('[data-role="composer"]').hidden = !threadMode;
 
+    $root.setAttribute("data-wallpaper", chatWallpaper());
+
     var searchbar = $root.querySelector('[data-role="searchbar"]');
     var searchInput = $root.querySelector('[data-role="search"]');
-    var showSearch = threadMode || ui.tab === "chats" || ui.tab === "people";
+    var showSearch = threadMode ? !!ui.searchOpen : (ui.tab === "chats" || ui.tab === "people");
     if (searchbar) searchbar.hidden = !showSearch;
     if (searchInput) {
       if (searchInput.value !== (ui.search || "")) searchInput.value = ui.search || "";
@@ -3851,6 +3856,32 @@
 
     applySearchFilter();
     updateComposer();
+  }
+
+  var WALLPAPERS = ["pattern", "sky", "mint", "sunset", "night"];
+
+  function chatWallpaper() {
+    var value = state && state.settings ? state.settings.chatWallpaper : "";
+    return WALLPAPERS.indexOf(value) === -1 ? "pattern" : value;
+  }
+
+  function setWallpaper(value) {
+    if (!state) return;
+    if (!state.settings) state.settings = {};
+    state.settings.chatWallpaper = WALLPAPERS.indexOf(value) === -1 ? "pattern" : value;
+    saveState();
+    render();
+    toastMsg("Chat wallpaper updated");
+  }
+
+  function toggleThreadSearch() {
+    ui.searchOpen = !ui.searchOpen;
+    if (!ui.searchOpen) ui.search = "";
+    render();
+    if (ui.searchOpen) {
+      var input = $root && $root.querySelector('[data-role="search"]');
+      if (input) input.focus();
+    }
   }
 
   function applySearchFilter() {
@@ -4773,6 +4804,21 @@
       "</details>" +
 
       '<div class="cm-card">' +
+        "<h3>Chat wallpaper</h3>" +
+        '<p class="cm-muted">Pick a background for your chats. It stays on this phone.</p>' +
+        '<div class="cm-wallpapers">' +
+          WALLPAPERS.map(function (name) {
+            var labels = { pattern: "Pattern", sky: "Sky", mint: "Mint", sunset: "Sunset", night: "Night" };
+            var active = chatWallpaper() === name;
+            return '<button type="button" class="cm-wallpaper' + (active ? " active" : "") + '" data-action="set-wallpaper" data-value="' + name + '" aria-pressed="' + (active ? "true" : "false") + '" title="' + labels[name] + ' wallpaper">' +
+              '<span class="cm-wallpaper-swatch" data-swatch="' + name + '"></span>' +
+              '<span class="cm-wallpaper-name">' + labels[name] + "</span>" +
+            "</button>";
+          }).join("") +
+        "</div>" +
+      "</div>" +
+
+      '<div class="cm-card">' +
         "<h3>About</h3>" +
         '<p class="cm-muted">Community Chat v' + VERSION + " · " + escapeHTML(statusText) +
           " · Last sync: " + escapeHTML(lastSync) + "</p>" +
@@ -4854,6 +4900,7 @@
     ui.mode = "tabs";
     ui.peer = null;
     ui.search = "";
+    ui.searchOpen = false;
     removeThreadBackAction();
     render();
   }
@@ -4874,6 +4921,7 @@
     ui.peer = peer;
     ui.tab = "chats";
     ui.search = "";
+    ui.searchOpen = false;
 
     var thread = getThread(peer, true);
     if (thread) {
@@ -5027,6 +5075,10 @@
       openThread(target.dataset.id);
     } else if (action === "connect-bot") {
       connectBot();
+    } else if (action === "toggle-search") {
+      toggleThreadSearch();
+    } else if (action === "set-wallpaper") {
+      setWallpaper(target.dataset.value);
     } else if (action === "save-api") {
       saveApiBase();
     } else if (action === "unlock-dev") {

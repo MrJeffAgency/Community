@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.10
+- **Chat search is now a toggle.** The search field no longer takes up space in every chat; tap the 🔍 button in the chat header to show it, tap again to hide it.
+- **Five chat wallpapers.** Choose Pattern, Sky, Mint, Sunset or Night in **Me → Chat wallpaper**. The choice is saved on this phone and applies to every chat in both the plugin and the app.
+
 ## 1.9.9
 - **Connect an existing bot.** In **Me → Community bots** you can paste a `cmb_…` token to bring a bot that runs on a server (Python/Node) into the app. It gets a contact and a chat, and its replies appear there.
 - Chat keeps your typed message and scroll position when a bot reply arrives.

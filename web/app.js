@@ -1,5 +1,5 @@
 /* Community Chat — web app */
-const VERSION = "1.1.8";
+const VERSION = "1.1.9";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
@@ -98,7 +98,7 @@ const ROOMS = [
 ];
 
 let state = null;
-let ui = { tab: "chats", mode: "tabs", peer: null, status: "connecting", lastSync: 0, wallet: { data: null, loading: false, error: "", at: 0 } };
+let ui = { tab: "chats", mode: "tabs", peer: null, status: "connecting", lastSync: 0, searchOpen: false, wallet: { data: null, loading: false, error: "", at: 0 } };
 let running = true;
 let pollTimer = null;
 let pollInFlight = false;
@@ -409,6 +409,7 @@ function normalizeState(data) {
       notify: settingsInput.notify !== false,
       hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : "",
       devMode: settingsInput.devMode === true,
+      chatWallpaper: ["pattern", "sky", "mint", "sunset", "night"].indexOf(settingsInput.chatWallpaper) === -1 ? "pattern" : settingsInput.chatWallpaper,
       apiBase: settingsInput.apiBase == null ? DEFAULT_API : cleanRelay(settingsInput.apiBase)
     },
     contacts: contacts,
@@ -1287,6 +1288,8 @@ function retryMessage(id) {
   });
 }
 function openThread(peer) {
+  ui.searchOpen = false;
+  ui.search = "";
   if (!state) return;
   ui.mode = "thread";
   ui.peer = peer;
@@ -1297,7 +1300,7 @@ function openThread(peer) {
   render();
   pollNow();
 }
-function closeThread() { ui.mode = "tabs"; ui.peer = null; render(); }
+function closeThread() { ui.mode = "tabs"; ui.peer = null; ui.searchOpen = false; ui.search = ""; render(); }
 function addContact(id) {
   var cid = normalizeId(id);
   if (!cid) { toast("Invalid ID. Use CM-XXXX-XXXX."); return; }
@@ -2086,9 +2089,31 @@ function openSendTokenModal(post) {
   applyDelivery();
 }
 
+var WALLPAPERS = ["pattern", "sky", "mint", "sunset", "night"];
+function chatWallpaper() {
+  var value = state && state.settings ? state.settings.chatWallpaper : "";
+  return WALLPAPERS.indexOf(value) === -1 ? "pattern" : value;
+}
+function setWallpaper(value) {
+  if (!state) return;
+  if (!state.settings) state.settings = {};
+  state.settings.chatWallpaper = WALLPAPERS.indexOf(value) === -1 ? "pattern" : value;
+  saveState();
+  render();
+  toast("Chat wallpaper updated");
+}
+function toggleThreadSearch() {
+  ui.searchOpen = !ui.searchOpen;
+  if (!ui.searchOpen) { ui.search = ""; render(); return; }
+  render();
+  var input = document.getElementById("searchInput");
+  if (input) input.focus();
+}
 function applySearch() {
   var input = document.getElementById("searchInput");
-  var q = String(input && input.value || "").trim().toLowerCase();
+  var raw = String(input && input.value || "");
+  ui.search = raw;
+  var q = raw.trim().toLowerCase();
   if (ui.mode === "thread") {
     var msgs = document.getElementById("msgs");
     if (!msgs) return;
@@ -2118,6 +2143,7 @@ function applySearch() {
 /* ---------- render ---------- */
 function render() {
   if (!$root) return;
+  $root.setAttribute("data-wallpaper", chatWallpaper());
   if (ui.mode === "thread") renderThread();
   else renderTabs();
 }
@@ -2221,6 +2247,11 @@ function renderMe() {
   html += '<div class="cm-card"><h3>Admin</h3>' + (isAdmin()
     ? '<p class="cm-muted">Admin mode is ON' + (state.user.id === DEV_ID ? "" : " (unlocked)") + '. Grant verified badges in People.</p><div class="cm-btn-row"><button class="cm-btn danger" data-action="lock-dev">Turn off admin mode</button></div>'
     : '<p class="cm-muted">Enter the admin code to unlock verified-badge tools.</p><div class="cm-inline"><input class="cm-input" id="devCode" type="password" placeholder="Admin code"><button class="cm-btn primary" data-action="unlock-dev">Unlock</button></div>') + "</div>";
+  html += '<div class="cm-card"><h3>Chat wallpaper</h3><p class="cm-muted">Pick a background for your chats. It stays on this phone.</p><div class="cm-wallpapers">' + WALLPAPERS.map(function (name) {
+    var labels = { pattern: "Pattern", sky: "Sky", mint: "Mint", sunset: "Sunset", night: "Night" };
+    var active = chatWallpaper() === name;
+    return '<button type="button" class="cm-wallpaper' + (active ? " active" : "") + '" data-action="set-wallpaper" data-value="' + name + '" aria-pressed="' + (active ? "true" : "false") + '"><span class="cm-wallpaper-swatch" data-swatch="' + name + '"></span><span class="cm-wallpaper-name">' + labels[name] + '</span></button>';
+  }).join("") + '</div></div>';
   html += '<div class="cm-card"><h3>About</h3><p class="cm-muted">Community Chat v' + VERSION + " · " + escapeHTML(ui.status || "") + " · Last sync: " + escapeHTML(ui.lastSync ? new Date(ui.lastSync).toLocaleTimeString() : "not yet") + '</p><p class="cm-muted">Made for Acode. Send feedback or ask for a verified badge by messaging ' + escapeHTML(DEV_ID) + " from the People tab.</p></div>";
   return html;
 }
@@ -2277,8 +2308,8 @@ function renderThread() {
   var contact = !isCommunity ? state.contacts[peer] : null;
   var online = contact && contact.lastSeen && Date.now() - contact.lastSeen < ONLINE_MS;
   var headInfo = '<div style="flex:1"' + (isCommunity ? "" : ' class="cm-clickable" data-action="view-profile" data-id="' + escapeHTML(peer) + '"') + '><div class="cm-rowname">' + escapeHTML(name) + (isCommunity ? "" : verifiedBadge(peer)) + (online ? ' <span class="cm-online">online</span>' : "") + '</div><div class="cm-rowsub">' + (isCommunity ? escapeHTML(roomInfo(slug).desc) : escapeHTML(peer)) + "</div></div>";
-  var html = '<div class="cm-thread"><div class="cm-thread-head"><button class="cm-btn" data-action="back">←</button>' + headInfo + '</div>';
-  html += '<div class="cm-searchbar cm-searchbar-thread"><span class="cm-search-ico">🔍</span><input id="searchInput" type="search" placeholder="Search this chat" oninput="applySearch()"></div>';
+  var html = '<div class="cm-thread"><div class="cm-thread-head"><button class="cm-btn" data-action="back">←</button>' + headInfo + '<button class="cm-btn" data-action="toggle-search" aria-label="Search this chat" title="Search this chat">🔍</button></div>';
+  html += '<div class="cm-searchbar cm-searchbar-thread"' + (ui.searchOpen ? "" : " hidden") + '><span class="cm-search-ico">🔍</span><input id="searchInput" type="search" placeholder="Search this chat" oninput="applySearch()" value="' + escapeHTML(ui.search || "") + '"></div>';
   html += '<div class="cm-thread-msgs" id="msgs">';
   if (!msgs.length) {
     html += '<div class="cm-empty">' + (isCommunity && slug === "ai" ? "Ask Lucky AI anything. Replies are private to this app." : "No messages yet. Say hello!") + "</div>";
@@ -2312,6 +2343,7 @@ function renderThread() {
   var restored = document.getElementById("composer");
   if (restored && draft) restored.value = draft;
   bindActions();
+  if (ui.searchOpen && ui.search) applySearch();
   var comp = document.getElementById("composer");
   if (comp) comp.addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); } });
 }
@@ -2376,6 +2408,8 @@ function bindActions() {
       else if (action === "open-botfather") openBotFather();
       else if (action === "open-bot") openThread(node.dataset.id);
       else if (action === "connect-bot") connectBot();
+      else if (action === "toggle-search") toggleThreadSearch();
+      else if (action === "set-wallpaper") setWallpaper(node.dataset.value);
       else if (action === "save-api") saveApiBase();
       else if (action === "unlock-dev") unlockDev();
       else if (action === "lock-dev") lockDev();
