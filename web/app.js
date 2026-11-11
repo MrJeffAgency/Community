@@ -97,7 +97,7 @@ const ROOMS = [
 ];
 
 let state = null;
-let ui = { tab: "chats", mode: "tabs", peer: null, status: "connecting", wallet: { data: null, loading: false, error: "", at: 0 } };
+let ui = { tab: "chats", mode: "tabs", peer: null, status: "connecting", lastSync: 0, wallet: { data: null, loading: false, error: "", at: 0 } };
 let running = true;
 let pollTimer = null;
 let pollInFlight = false;
@@ -580,7 +580,7 @@ function pollNow() {
   }).catch(function () {});
   var verifiedPoll = pollVerified();
   Promise.all([roomPoll, dmPoll, verifiedPoll]).then(function () {
-    if (running) { ui.status = "online"; renderStatus(); }
+    if (running) { ui.status = "online"; ui.lastSync = Date.now(); renderStatus(); }
   }).catch(function () {}).then(function () {
     pollInFlight = false;
     schedulePoll();
@@ -2113,7 +2113,7 @@ function renderMe() {
   html += '<div class="cm-card"><h3>Admin</h3>' + (isAdmin()
     ? '<p class="cm-muted">Admin mode is ON' + (state.user.id === DEV_ID ? "" : " (unlocked)") + '. Grant verified badges in People.</p><div class="cm-btn-row"><button class="cm-btn danger" data-action="lock-dev">Turn off admin mode</button></div>'
     : '<p class="cm-muted">Enter the admin code to unlock verified-badge tools.</p><div class="cm-inline"><input class="cm-input" id="devCode" type="password" placeholder="Admin code"><button class="cm-btn primary" data-action="unlock-dev">Unlock</button></div>') + "</div>";
-  html += '<div class="cm-card"><h3>About</h3><p class="cm-muted">Community Chat web v' + VERSION + " · " + escapeHTML(ui.status || "") + '</p><p class="cm-muted">Made for Acode. Send feedback or ask for a verified badge by messaging ' + escapeHTML(DEV_ID) + " from the People tab.</p></div>";
+  html += '<div class="cm-card"><h3>About</h3><p class="cm-muted">Community Chat v' + VERSION + " · " + escapeHTML(ui.status || "") + " · Last sync: " + escapeHTML(ui.lastSync ? new Date(ui.lastSync).toLocaleTimeString() : "not yet") + '</p><p class="cm-muted">Made for Acode. Send feedback or ask for a verified badge by messaging ' + escapeHTML(DEV_ID) + " from the People tab.</p></div>";
   return html;
 }
 function renderWallet() {
