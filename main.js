@@ -1861,7 +1861,7 @@
       if (!value || typeof value !== "object") return;
       var name = String(value.name || "").trim().slice(0, 40);
       if (!name) return;
-      var type = ["dice", "coin", "guess"].indexOf(value.type) === -1 ? "dice" : value.type;
+      var type = ["dice", "coin", "guess", "quiz"].indexOf(value.type) === -1 ? "dice" : value.type;
       games.push({ id: String(value.id || uid()), name: name, type: type, stake: String(value.stake || "1").slice(0, 20), creator: String(value.creator || ""), createdAt: Number(value.createdAt) || Date.now(), plays: Math.max(0, Number(value.plays) || 0) });
     });
     var gameScores = (input.gameScores && typeof input.gameScores === "object") ? input.gameScores : {};
@@ -1883,7 +1883,7 @@
         notify: settingsInput.notify !== false,
         hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : "",
         devMode: settingsInput.devMode === true,
-        chatWallpaper: ["pattern", "sky", "mint", "sunset", "night"].indexOf(settingsInput.chatWallpaper) === -1 ? "pattern" : settingsInput.chatWallpaper,
+        chatWallpaper: ["pattern", "sky", "mint", "sunset", "night", "paris", "lion", "community", "unicorn", "plug"].indexOf(settingsInput.chatWallpaper) === -1 ? "pattern" : settingsInput.chatWallpaper,
         apiBase: ""
       },
       contacts: contacts,
@@ -3767,7 +3767,7 @@
     updateComposer();
   }
 
-  var WALLPAPERS = ["pattern", "sky", "mint", "sunset", "night"];
+  var WALLPAPERS = ["pattern", "sky", "mint", "sunset", "night", "paris", "lion", "community", "unicorn", "plug"];
 
   function chatWallpaper() {
     var value = state && state.settings ? state.settings.chatWallpaper : "";
@@ -3805,10 +3805,21 @@
     if (!name) { toastMsg("Enter a game name"); return; }
     var type = typeInput ? typeInput.value : "dice";
     var stake = String(stakeInput ? stakeInput.value : "1").trim() || "1";
-    state.games.push({ id: uid(), name: name, type: type, stake: stake, creator: state.user.id, createdAt: Date.now(), plays: 0 });
+    var nowMs = Date.now();
+    state.games.push({ id: uid(), name: name, type: type, stake: stake, creator: state.user.id, createdAt: nowMs, plays: 0, status: "open", prize: stake, expiresAt: nowMs + (24 * 60 * 60 * 1000) });
     saveState();
     toastMsg("Game created");
     render();
+  }
+  function expireGames() {
+    if (!state || !state.games) return;
+    var nowMs = Date.now();
+    state.games.forEach(function (g) {
+      if (!g || g.status !== "open") return;
+      if (g.expiresAt && nowMs > (Number(g.expiresAt) || 0)) {
+        g.status = "returned";
+      }
+    });
   }
   function deleteGame(id) {
     if (!state || !state.games) return;
@@ -3826,10 +3837,14 @@
     if (game.type === "dice") win = Math.floor(Math.random() * 6) + 1 >= 4;
     else if (game.type === "coin") win = Math.random() < 0.5;
     else if (game.type === "guess") win = Math.random() < 0.35;
+    else if (game.type === "quiz") win = Math.random() < 0.5;
     if (!state.gameScores) state.gameScores = {};
     if (win) {
       var pts = Math.max(1, Math.round((parseFloat(game.stake) || 1) * 10));
       state.gameScores[state.user.id] = (state.gameScores[state.user.id] || 0) + pts;
+      game.status = "won";
+      game.winner = state.user.id;
+      game.plays = (game.plays || 0) + 1;
       toastMsg("You won " + pts + " points!");
     } else {
       toastMsg("You lost. Try again!");
@@ -4630,6 +4645,7 @@
             '<option value="dice">Dice roll</option>' +
             '<option value="coin">Coin flip</option>' +
             '<option value="guess">Number guess</option>' +
+            '<option value="quiz">Quiz question</option>' +
           "</select>" +
         "</div>" +
         '<div class="cm-inline">' +
@@ -4801,7 +4817,7 @@
         '<p class="cm-muted">Pick a background for your chats. It stays on this phone.</p>' +
         '<div class="cm-wallpapers">' +
           WALLPAPERS.map(function (name) {
-            var labels = { pattern: "Pattern", sky: "Sky", mint: "Mint", sunset: "Sunset", night: "Night" };
+            var labels = { pattern: "Pattern", sky: "Sky", mint: "Mint", sunset: "Sunset", night: "Night", paris: "Paris", lion: "Lion", community: "Community", unicorn: "Unicorn", plug: "Plug" };
             var active = chatWallpaper() === name;
             return '<button type="button" class="cm-wallpaper' + (active ? " active" : "") + '" data-action="set-wallpaper" data-value="' + name + '" aria-pressed="' + (active ? "true" : "false") + '" title="' + labels[name] + ' wallpaper">' +
               '<span class="cm-wallpaper-swatch" data-swatch="' + name + '"></span>' +
@@ -5038,6 +5054,14 @@
       saveRoom();
     } else if (action === "save-relay") {
       saveRelay();
+    } else if (action === "create-game") {
+      createGame();
+    } else if (action === "play-game") {
+      playGame(target.dataset.id);
+    } else if (action === "delete-game") {
+      deleteGame(target.dataset.id);
+    } else if (action === "claim-hdo") {
+      claimHdo();
     } else if (action === "set-profile-picture") {
       setProfilePictureFromFile();
     } else if (action === "set-profile-nft") {

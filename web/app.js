@@ -415,7 +415,7 @@ function normalizeState(data) {
       notify: settingsInput.notify !== false,
       hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : "",
       devMode: settingsInput.devMode === true,
-      chatWallpaper: ["pattern", "sky", "mint", "sunset", "night"].indexOf(settingsInput.chatWallpaper) === -1 ? "pattern" : settingsInput.chatWallpaper,
+      chatWallpaper: ["pattern", "sky", "mint", "sunset", "night", "paris", "lion", "community", "unicorn", "plug"].indexOf(settingsInput.chatWallpaper) === -1 ? "pattern" : settingsInput.chatWallpaper,
       apiBase: ""
     },
     contacts: contacts,
@@ -1960,7 +1960,7 @@ function openSendTokenModal(post) {
   applyDelivery();
 }
 
-var WALLPAPERS = ["pattern", "sky", "mint", "sunset", "night"];
+var WALLPAPERS = ["pattern", "sky", "mint", "sunset", "night", "paris", "lion", "community", "unicorn", "plug"];
 function chatWallpaper() {
   var value = state && state.settings ? state.settings.chatWallpaper : "";
   return WALLPAPERS.indexOf(value) === -1 ? "pattern" : value;
@@ -1992,10 +1992,18 @@ function createGame() {
   if (!name) { toast("Enter a game name"); return; }
   var type = typeInput ? typeInput.value : "dice";
   var stake = String(stakeInput && stakeInput.value || "1").trim() || "1";
-  state.games.push({ id: uid(), name: name, type: type, stake: stake, creator: state.user.id, createdAt: Date.now(), plays: 0 });
+  state.games.push({ id: uid(), name: name, type: type, stake: stake, creator: state.user.id, createdAt: Date.now(), plays: 0, status: "open", prize: stake, expiresAt: Date.now() + (24 * 60 * 60 * 1000) });
   saveState();
   toast("Game created");
   render();
+}
+function expireGames() {
+  if (!state || !state.games) return;
+  var nowMs = Date.now();
+  state.games.forEach(function (g) {
+    if (!g || g.status !== "open") return;
+    if (g.expiresAt && nowMs > (Number(g.expiresAt) || 0)) { g.status = "returned"; }
+  });
 }
 function deleteGame(id) {
   if (!state || !state.games) return;
@@ -2162,7 +2170,7 @@ function renderGames() {
   // create form
   if (isAdmin() && state.games.length < 10) {
     html += '<div class="cm-card"><h3>Create game</h3>' +
-      '<div class="cm-inline"><input class="cm-input" id="gameName" placeholder="Game name"><select class="cm-input" id="gameType"><option value="dice">Dice roll</option><option value="coin">Coin flip</option><option value="guess">Number guess</option></select></div>' +
+      '<div class="cm-inline"><input class="cm-input" id="gameName" placeholder="Game name"><select class="cm-input" id="gameType"><option value="dice">Dice roll</option><option value="coin">Coin flip</option><option value="guess">Number guess</option><option value="quiz">Quiz question</option></select></div>' +
       '<div class="cm-inline"><input class="cm-input" id="gameStake" placeholder="Stake (HDO)" value="1"><button class="cm-btn primary" data-action="create-game">Create</button></div>' +
       '<p class="cm-muted">Games created: ' + state.games.length + '/10</p></div>';
   } else {
@@ -2205,7 +2213,7 @@ function renderMe() {
     ? '<p class="cm-muted">Admin mode is ON' + (state.user.id === DEV_ID ? "" : " (unlocked)") + '. Grant verified badges in People.</p><div class="cm-btn-row"><button class="cm-btn danger" data-action="lock-dev">Turn off admin mode</button></div>'
     : '<p class="cm-muted">Enter the admin code to unlock verified-badge tools.</p><div class="cm-inline"><input class="cm-input" id="devCode" type="password" placeholder="Admin code"><button class="cm-btn primary" data-action="unlock-dev">Unlock</button></div>') + "</div>";
   html += '<div class="cm-card"><h3>Chat wallpaper</h3><p class="cm-muted">Pick a background for your chats. It stays on this phone.</p><div class="cm-wallpapers">' + WALLPAPERS.map(function (name) {
-    var labels = { pattern: "Pattern", sky: "Sky", mint: "Mint", sunset: "Sunset", night: "Night" };
+    var labels = { pattern: "Pattern", sky: "Sky", mint: "Mint", sunset: "Sunset", night: "Night", paris: "Paris", lion: "Lion", community: "Community", unicorn: "Unicorn", plug: "Plug" };
     var active = chatWallpaper() === name;
     return '<button type="button" class="cm-wallpaper' + (active ? " active" : "") + '" data-action="set-wallpaper" data-value="' + name + '" aria-pressed="' + (active ? "true" : "false") + '"><span class="cm-wallpaper-swatch" data-swatch="' + name + '"></span><span class="cm-wallpaper-name">' + labels[name] + '</span></button>';
   }).join("") + '</div></div>';
@@ -2353,6 +2361,10 @@ function bindActions() {
         pollNow();
         toast("Relay updated");
       }
+      else if (action === "create-game") createGame();
+      else if (action === "play-game") playGame(node.dataset.id);
+      else if (action === "delete-game") deleteGame(node.dataset.id);
+      else if (action === "claim-hdo") claimHdo();
       else if (action === "back") closeThread();
       else if (action === "send") doSend();
       else if (action === "retry") retryMessage(node.dataset.id);
