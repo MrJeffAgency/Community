@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.9.11
+- Removed all Community Bot API references; bots now run locally on the device (no remote API).
+- Added a **Game Room** tab (up to 10 games: dice, coin flip, number guess) with points and a leaderboard.
+- Mobile-first responsive CSS for phones and tablets.
+
 ## 1.9.10
 - **Chat search is now a toggle.** The search field no longer takes up space in every chat; tap the 🔍 button in the chat header to show it, tap again to hide it.
 - **Five chat wallpapers.** Choose Pattern, Sky, Mint, Sunset or Night in **Me → Chat wallpaper**. The choice is saved on this phone and applies to every chat in both the plugin and the app.

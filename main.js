@@ -21,13 +21,12 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.9.10";
+  var VERSION = "1.9.11";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
   var DEFAULT_ROOM = "general";
   var DEFAULT_RELAY = "https://community-relay.hdo-box.workers.dev";
-  var DEFAULT_API = "https://community-bot-api.hdo-box.workers.dev";
   /* Older builds defaulted to ntfy.sh / ntfy.envs.net, which have a daily
      message quota. Stored copies of those defaults are migrated once to
      DEFAULT_RELAY; a relay the user types in later is kept as-is. */
@@ -1856,6 +1855,17 @@
       if (!duplicate) bots.push(record);
     });
 
+    var games = [];
+    var gamesInput = Array.isArray(input.games) ? input.games : [];
+    gamesInput.slice(0, 10).forEach(function (value) {
+      if (!value || typeof value !== "object") return;
+      var name = String(value.name || "").trim().slice(0, 40);
+      if (!name) return;
+      var type = ["dice", "coin", "guess"].indexOf(value.type) === -1 ? "dice" : value.type;
+      games.push({ id: String(value.id || uid()), name: name, type: type, stake: String(value.stake || "1").slice(0, 20), creator: String(value.creator || ""), createdAt: Number(value.createdAt) || Date.now(), plays: Math.max(0, Number(value.plays) || 0) });
+    });
+    var gameScores = (input.gameScores && typeof input.gameScores === "object") ? input.gameScores : {};
+
     var cryptoInput = input.crypto && typeof input.crypto === "object" ? input.crypto : {};
     var cryptoState = {
       publicKey: cleanPublicKey(cryptoInput.publicKey),
@@ -1874,7 +1884,7 @@
         hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : "",
         devMode: settingsInput.devMode === true,
         chatWallpaper: ["pattern", "sky", "mint", "sunset", "night"].indexOf(settingsInput.chatWallpaper) === -1 ? "pattern" : settingsInput.chatWallpaper,
-        apiBase: settingsInput.apiBase == null ? DEFAULT_API : cleanRelay(settingsInput.apiBase)
+        apiBase: ""
       },
       contacts: contacts,
       threads: threads,
@@ -1889,6 +1899,8 @@
       followers: followers,
       following: following,
       bots: bots,
+      games: games,
+      gameScores: gameScores,
       welcome: input.welcome !== false
     };
   }
@@ -2521,9 +2533,8 @@
     });
 
     var verifiedPoll = pollVerified();
-    var botPoll = pollBotOutbox();
 
-    return Promise.all([roomPoll, dmPoll, verifiedPoll, botPoll])
+    return Promise.all([roomPoll, dmPoll, verifiedPoll])
       .then(function () {
         if (running) setStatus("online");
       })
@@ -2535,68 +2546,6 @@
         pollInFlight = false;
         schedulePoll();
       });
-  }
-
-  /* Replies written by an API-backed bot (see api/) arrive here. */
-  var lastOutboxAt = 0;
-  function pollBotOutbox() {
-    if (!running || !state || !Array.isArray(state.bots) || !state.bots.length) return Promise.resolve();
-    var base = apiBase();
-    if (!base) return Promise.resolve();
-    var now = Date.now();
-    if (lastOutboxAt && now - lastOutboxAt < 6000) return Promise.resolve();
-    lastOutboxAt = now;
-    var changed = false;
-    var jobs = [];
-    state.bots.forEach(function (bot) {
-      if (!bot || !bot.api || !bot.token) return;
-      var since = Number(bot.lastOut) || 0;
-      jobs.push(fetchWithTimeout(base + "/v1/bots/me/outbox?since=" + since, {
-        headers: { Authorization: "Bearer " + bot.token },
-        cache: "no-store"
-      }, 12000).then(function (response) {
-        return response.ok ? response.json() : null;
-      }).then(function (data) {
-        if (!state || !data || !Array.isArray(data.messages) || !data.messages.length) return;
-        data.messages.forEach(function (raw) {
-          var chatId = normalizeId(raw.chat_id);
-          var text = String(raw.text || "");
-          if (!chatId || !text) return;
-          var thread = getThread(chatId, true);
-          if (!thread) return;
-          if (!contactFor(chatId)) upsertContact(chatId, defaultName(chatId), "🙂", false);
-          var mid = "api-" + raw.message_id;
-          var exists = thread.messages.some(function (message) { return message.id === mid; });
-          if (exists) return;
-          var duplicate = thread.messages.some(function (message) {
-            return !message.mine && message.text === text &&
-              Math.abs((Number(message.ts) || 0) - (Number(raw.created_at) || 0)) < 20000;
-          });
-          if (duplicate) return;
-          thread.messages.push({
-            id: mid,
-            from: bot.id,
-            name: bot.name,
-            text: text,
-            ts: Number(raw.created_at) || Date.now(),
-            mine: false,
-            status: "sent"
-          });
-          thread.lastTs = Number(raw.created_at) || Date.now();
-          if (!(ui.mode === "thread" && ui.peer === chatId)) thread.unread = (thread.unread || 0) + 1;
-          changed = true;
-        });
-        if (data.next_since) bot.lastOut = data.next_since;
-        if (data.messages.length) bot.apiAlive = true;
-        saveState();
-      }).catch(function () {}));
-    });
-    if (!jobs.length) return Promise.resolve();
-    return Promise.all(jobs).then(function () {
-      if (!changed) return;
-      if (ui.mode === "thread") renderThreadMessages();
-      updateSidebar();
-    });
   }
 
   function schedulePoll(delay) {
@@ -3336,9 +3285,6 @@
         return { command: String((item && item.command) || "").replace(/^\//, "").slice(0, 32), description: String((item && item.description) || "").slice(0, 256) };
       }).filter(function (item) { return item.command; }) : [],
       createdAt: Number(record.createdAt) || Date.now(),
-      api: !!record.api,
-      apiAlive: !!record.apiAlive,
-      lastOut: Math.max(0, Number(record.lastOut) || 0)
     };
   }
 
@@ -3452,20 +3398,6 @@
     saveState();
     if (ui.mode === "thread" && ui.peer === thread.peer) renderThreadMessages(true);
 
-    var base = apiBase();
-    var sentToApi = false;
-    if (base) {
-      sentToApi = true;
-      fetchWithTimeout(base + "/v1/bots/" + encodeURIComponent(bot.username) + "/sendMessage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from: state.user.id, text: clean }),
-        cache: "no-store"
-      }, 12000).catch(function () {});
-    }
-
-    if (sentToApi && bot.api && bot.apiAlive) return;
-
     var response = botReply(bot, clean);
     var botMsg = {
       id: uid(),
@@ -3481,33 +3413,6 @@
     saveState();
     if (ui.mode === "thread" && ui.peer === thread.peer) renderThreadMessages();
     updateSidebar();
-  }
-
-  function apiBase() {
-    var value = state && state.settings ? cleanRelay(state.settings.apiBase) : "";
-    return value;
-  }
-
-  function registerBotWithApi(bot) {
-    var base = apiBase();
-    if (!base || !bot) return Promise.resolve(null);
-    return fetchWithTimeout(base + "/v1/bots", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: bot.id, name: bot.name, username: bot.username, owner: state.user.id }),
-      cache: "no-store"
-    }, 15000).then(function (response) {
-      return response.json().catch(function () { return null; });
-    }).then(function (data) {
-      if (!data || !data.bot || !data.bot.token) return null;
-      bot.token = String(data.bot.token);
-      if (data.bot.id) bot.id = String(data.bot.id);
-      bot.api = true;
-      saveState();
-      return bot;
-    }).catch(function () {
-      return null;
-    });
   }
 
   function botFatherReply(text) {
@@ -3545,7 +3450,6 @@
       state.bots.push(bot);
       ensureBotContact(bot);
       saveState();
-      registerBotWithApi(bot);
       return "Done! Bot created:\n" +
         "Name: " + name + "\n" +
         "Username: @" + username + "\n" +
@@ -3743,6 +3647,9 @@
         '<button type="button" class="cm-tab" data-action="tab" data-tab="people" role="tab" aria-selected="false">' +
           '<span class="icon account_box"></span><span>People</span>' +
         '</button>' +
+        '<button type="button" class="cm-tab" data-action="tab" data-tab="games" role="tab" aria-selected="false">' +
+          '<span>🎮</span><span>Games</span>' +
+        '</button>' +
         '<button type="button" class="cm-tab" data-action="tab" data-tab="me" role="tab" aria-selected="false">' +
           '<span class="icon person"></span><span>Me</span>' +
         '</button>' +
@@ -3849,6 +3756,8 @@
       view.innerHTML = chatsHTML();
     } else if (ui.tab === "people") {
       view.innerHTML = peopleHTML();
+    } else if (ui.tab === "games") {
+      view.innerHTML = gamesHTML();
     } else {
       view.innerHTML = meHTML();
       refreshWallet(false);
@@ -3882,6 +3791,56 @@
       var input = $root && $root.querySelector('[data-role="search"]');
       if (input) input.focus();
     }
+  }
+
+  function createGame() {
+    if (!state) return;
+    if (!state.games) state.games = [];
+    if (state.games.length >= 10) { toastMsg("Game limit reached (10)"); return; }
+    var nameInput = $root.querySelector('[data-role="gamename"]');
+    var typeInput = $root.querySelector('[data-role="gametype"]');
+    var stakeInput = $root.querySelector('[data-role="gamestake"]');
+    var name = String(nameInput ? nameInput.value : "").trim();
+    if (!name) { toastMsg("Enter a game name"); return; }
+    var type = typeInput ? typeInput.value : "dice";
+    var stake = String(stakeInput ? stakeInput.value : "1").trim() || "1";
+    state.games.push({ id: uid(), name: name, type: type, stake: stake, creator: state.user.id, createdAt: Date.now(), plays: 0 });
+    saveState();
+    toastMsg("Game created");
+    render();
+  }
+  function deleteGame(id) {
+    if (!state || !state.games) return;
+    state.games = state.games.filter(function (g) { return g.id !== id; });
+    saveState();
+    render();
+  }
+  function playGame(id) {
+    if (!state || !state.games) return;
+    var game = null;
+    for (var i = 0; i < state.games.length; i += 1) if (state.games[i].id === id) { game = state.games[i]; break; }
+    if (!game) return;
+    game.plays = (game.plays || 0) + 1;
+    var win = false;
+    if (game.type === "dice") win = Math.floor(Math.random() * 6) + 1 >= 4;
+    else if (game.type === "coin") win = Math.random() < 0.5;
+    else if (game.type === "guess") win = Math.random() < 0.35;
+    if (!state.gameScores) state.gameScores = {};
+    if (win) {
+      var pts = Math.max(1, Math.round((parseFloat(game.stake) || 1) * 10));
+      state.gameScores[state.user.id] = (state.gameScores[state.user.id] || 0) + pts;
+      toastMsg("You won " + pts + " points!");
+    } else {
+      toastMsg("You lost. Try again!");
+    }
+    saveState();
+    render();
+  }
+  function claimHdo() {
+    if (!state) return;
+    var pts = state.gameScores && state.gameScores[state.user.id] ? state.gameScores[state.user.id] : 0;
+    if (pts <= 0) { toastMsg("No points to claim"); return; }
+    toastMsg("You have " + pts + " points. Use Wallet to send HDO to a winner.", 5000);
   }
 
   function applySearchFilter() {
@@ -4658,6 +4617,52 @@
    * UI: settings / me
    * ------------------------------------------------------------------ */
 
+  function gamesHTML() {
+    if (!state.games) state.games = [];
+    if (!state.gameScores) state.gameScores = {};
+    var html = '<div class="cm-card"><h3>Game Room</h3><p class="cm-muted">Create up to 10 games. Play to earn points and claim HDO.</p></div>';
+    if (state.games.length < 10) {
+      html += '<div class="cm-card"><h3>Create game</h3>' +
+        '<div class="cm-inline">' +
+          '<input class="cm-input" data-role="gamename" type="text" placeholder="Game name">' +
+          '<select class="cm-input" data-role="gametype">' +
+            '<option value="dice">Dice roll</option>' +
+            '<option value="coin">Coin flip</option>' +
+            '<option value="guess">Number guess</option>' +
+          "</select>" +
+        "</div>" +
+        '<div class="cm-inline">' +
+          '<input class="cm-input" data-role="gamestake" type="text" placeholder="Stake (HDO)" value="1">' +
+          '<button type="button" class="cm-btn primary" data-action="create-game">Create</button>' +
+        "</div>" +
+        '<p class="cm-muted">Games: ' + state.games.length + "/10</p>" +
+      "</div>";
+    } else {
+      html += '<div class="cm-card"><p class="cm-muted">Game limit reached (10).</p></div>';
+    }
+    html += '<div class="cm-card"><h3>Games</h3>';
+    if (!state.games.length) html += '<p class="cm-muted">No games yet.</p>';
+    state.games.forEach(function (g) {
+      html += '<div class="cm-row" style="flex-direction:column;align-items:stretch;gap:6px">' +
+        '<div><b>' + escapeHTML(g.name) + '</b> <span class="cm-muted">(' + escapeHTML(g.type) + ")</span></div>" +
+        '<div class="cm-muted">Stake: ' + escapeHTML(g.stake) + ' HDO · plays: ' + g.plays + ' · by ' + escapeHTML(g.creator) + "</div>" +
+        '<div class="cm-button-row">' +
+          '<button type="button" class="cm-btn primary" data-action="play-game" data-id="' + escapeHTML(g.id) + '">Play</button>' +
+          '<button type="button" class="cm-btn danger" data-action="delete-game" data-id="' + escapeHTML(g.id) + '">Delete</button>' +
+        "</div>" +
+      "</div>";
+    });
+    html += "</div>";
+    var scores = Object.keys(state.gameScores).map(function (k) { return { id: k, pts: state.gameScores[k] }; }).sort(function (a, b) { return b.pts - a.pts; });
+    html += '<div class="cm-card"><h3>Leaderboard</h3>';
+    if (!scores.length) html += '<p class="cm-muted">No scores yet.</p>';
+    scores.slice(0, 10).forEach(function (s, i) {
+      html += '<div class="cm-row"><span class="cm-avatar cm-avatar-sm">' + (i + 1) + '</span><div style="flex:1"><div class="cm-rowname">' + escapeHTML(s.id) + '</div><div class="cm-rowsub">' + s.pts + ' pts</div></div></div>';
+    });
+    html += '<div class="cm-button-row"><button type="button" class="cm-btn" data-action="claim-hdo">Claim HDO reward</button></div></div>';
+    return html;
+  }
+
   function meHTML() {
     if (!state) return "";
     var statusText = ui.status === "online"
@@ -4731,19 +4736,6 @@
                 '<span class="cm-botrow-go">›</span></button>';
             }).join("") + "</div>"
           : '<p class="cm-muted">No bots yet.</p>') +
-        '<label class="cm-label" for="cm-bot-token">Connect an existing bot</label>' +
-        '<div class="cm-inline">' +
-          '<input class="cm-input" id="cm-bot-token" data-role="bottoken" type="password" placeholder="cmb_…" spellcheck="false" autocomplete="off">' +
-          '<button type="button" class="cm-btn" data-action="connect-bot">Connect</button>' +
-        "</div>" +
-        '<p class="cm-muted">Paste a bot token to talk to a bot that already runs on a server (for example a Python bot using <code>community-bot/</code>). It appears in Chats and answers in this thread.</p>' +
-        '<label class="cm-label" for="cm-api">Community Bot API base URL</label>' +
-        '<div class="cm-inline">' +
-          '<input class="cm-input" id="cm-api" data-role="apiinput" type="text" value="' + escapeHTML(state.settings.apiBase || "") + '" placeholder="' + escapeHTML(DEFAULT_API) + '" spellcheck="false">' +
-          '<button type="button" class="cm-btn" data-action="save-api">Save</button>' +
-        "</div>" +
-        '<p class="cm-muted">Bots are registered with the Community API at <code>' + escapeHTML(DEFAULT_API) + "</code>. Clear the field and save to keep new bots on this phone only.</p>" +
-      "</div>" +
 
       '<div class="cm-card">' +
         '<h3>Admin</h3>' +
@@ -5073,14 +5065,10 @@
       openBotFather();
     } else if (action === "open-bot") {
       openThread(target.dataset.id);
-    } else if (action === "connect-bot") {
-      connectBot();
     } else if (action === "toggle-search") {
       toggleThreadSearch();
     } else if (action === "set-wallpaper") {
       setWallpaper(target.dataset.value);
-    } else if (action === "save-api") {
-      saveApiBase();
     } else if (action === "unlock-dev") {
       unlockDev();
     } else if (action === "lock-dev") {
@@ -5485,71 +5473,6 @@
     saveState();
     openThread(BOTFATHER_ID);
     toastMsg("BotFather is ready. Type /help for commands.", 4000);
-  }
-
-  function connectBot() {
-    if (!state) return;
-    var input = $root ? $root.querySelector('[data-role="bottoken"]') : null;
-    var token = String(input ? input.value : "").trim();
-    if (!token) {
-      toastMsg("Paste a bot token from BotFather first");
-      if (input) input.focus();
-      return;
-    }
-    var base = apiBase();
-    if (!base) {
-      toastMsg("Set the Community Bot API base URL first");
-      return;
-    }
-    toastMsg("Connecting to the bot API…", 2000);
-    fetchWithTimeout(base + "/v1/bots/me", {
-      headers: { Authorization: "Bearer " + token, Accept: "application/json" },
-      cache: "no-store"
-    }, 15000).then(function (response) {
-      if (!response.ok) throw new Error(response.status === 401 ? "That token was rejected" : "API returned HTTP " + response.status);
-      return response.json();
-    }).then(function (data) {
-      var info = data && data.bot;
-      if (!info || !info.username) throw new Error("The API did not return a bot");
-      var id = normalizeId(info.id) || generateBotId();
-      if (!state.bots) state.bots = [];
-      var existing = null;
-      for (var i = 0; i < state.bots.length; i += 1) {
-        if (state.bots[i] && (state.bots[i].username === info.username || state.bots[i].id === id)) {
-          existing = state.bots[i];
-          break;
-        }
-      }
-      if (!existing) {
-        existing = { createdAt: Date.now(), description: "", commands: [] };
-        state.bots.push(existing);
-      }
-      existing.id = id;
-      existing.name = info.name || info.username;
-      existing.username = info.username;
-      existing.token = token;
-      existing.api = true;
-      existing.apiAlive = true;
-      existing.description = String(info.description || existing.description || "");
-      if (Array.isArray(info.commands)) existing.commands = info.commands;
-      ensureBotContact(existing);
-      saveState();
-      if (input) input.value = "";
-      openThread(existing.id);
-      toastMsg("Connected @" + existing.username + ". Say hi!");
-    }).catch(function (error) {
-      toastMsg("Could not connect: " + (error && error.message ? error.message : String(error)), 6000);
-    });
-  }
-
-  function saveApiBase() {
-    if (!state) return;
-    var input = $root ? $root.querySelector('[data-role="apiinput"]') : null;
-    var value = cleanRelay(input ? input.value : "");
-    state.settings.apiBase = value;
-    saveState();
-    toastMsg(value ? "Bot API saved: " + value : "Bot API cleared. Bots stay on this phone.");
-    render();
   }
 
   function unlockDev() {

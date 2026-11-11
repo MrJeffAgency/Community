@@ -2092,3 +2092,15 @@ select.cm-select {
     radial-gradient(color-mix(in srgb, #ffffff 22%, transparent) 1px, transparent 1px);
   background-size: auto, 28px 28px;
 }
+
+/* ---------- Mobile responsive polish ---------- */
+@media (max-width: 360px) {
+  .cm-tab span { font-size: 11px; }
+  .cm-tab { padding: 6px 4px; }
+  .cm-bubble { font-size: 13.5px; }
+  .cm-msgname { font-size: 11px; }
+}
+@media (min-width: 768px) {
+  .cm-app { max-width: 480px; margin: 0 auto; }
+}
+.cm-btn, .cm-tab, .cm-row { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }

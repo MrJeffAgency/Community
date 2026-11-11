@@ -1,11 +1,10 @@
 /* Community Chat — web app */
-const VERSION = "1.1.9";
+const VERSION = "1.1.10";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
 const DEFAULT_ROOM = "general";
 const DEFAULT_RELAY = "https://community-relay.hdo-box.workers.dev";
-const DEFAULT_API = "https://community-bot-api.hdo-box.workers.dev";
 const LEGACY_RELAYS = ["https://ntfy.sh", "https://ntfy.envs.net"];
 const TOPIC_PREFIX = "acode-community-v1-";
 const VERIFIED_TOPIC = TOPIC_PREFIX + "verified";
@@ -391,6 +390,13 @@ function normalizeState(data) {
     var id = normalizeId(value);
     if (id && id !== userId && following.indexOf(id) === -1) following.push(id);
   });
+  var games = [];
+  var gamesInput = Array.isArray(input.games) ? input.games : [];
+  gamesInput.slice(0, 10).forEach(function (value) {
+    var g = cleanGameRecord(value);
+    if (g && g.name) games.push(g);
+  });
+  var gameScores = (input.gameScores && typeof input.gameScores === "object") ? input.gameScores : {};
   var bots = [];
   var botsInput = Array.isArray(input.bots) ? input.bots : [];
   botsInput.slice(0, 50).forEach(function (value) {
@@ -410,7 +416,7 @@ function normalizeState(data) {
       hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : "",
       devMode: settingsInput.devMode === true,
       chatWallpaper: ["pattern", "sky", "mint", "sunset", "night"].indexOf(settingsInput.chatWallpaper) === -1 ? "pattern" : settingsInput.chatWallpaper,
-      apiBase: settingsInput.apiBase == null ? DEFAULT_API : cleanRelay(settingsInput.apiBase)
+      apiBase: ""
     },
     contacts: contacts,
     threads: threads,
@@ -424,6 +430,8 @@ function normalizeState(data) {
     followers: followers,
     following: following,
     bots: bots,
+    games: games,
+    gameScores: gameScores,
     welcome: input.welcome !== false
   };
 }
@@ -581,8 +589,7 @@ function pollNow() {
     saveState();
   }).catch(function () {});
   var verifiedPoll = pollVerified();
-  var botPoll = pollBotOutbox();
-  Promise.all([roomPoll, dmPoll, verifiedPoll, botPoll]).then(function () {
+  Promise.all([roomPoll, dmPoll, verifiedPoll]).then(function () {
     if (running) { ui.status = "online"; ui.lastSync = Date.now(); renderStatus(); }
   }).catch(function () {}).then(function () {
     pollInFlight = false;
@@ -590,63 +597,6 @@ function pollNow() {
   });
 }
 /* ---------- Community bots: collect replies written through the API ---------- */
-var lastOutboxAt = 0;
-function pollBotOutbox() {
-  if (!running || !state || !Array.isArray(state.bots) || !state.bots.length) return Promise.resolve();
-  var base = apiBase();
-  if (!base) return Promise.resolve();
-  var now = Date.now();
-  if (lastOutboxAt && now - lastOutboxAt < 6000) return Promise.resolve();
-  lastOutboxAt = now;
-  var changed = false;
-  var jobs = [];
-  state.bots.forEach(function (bot) {
-    if (!bot || !bot.api || !bot.token) return;
-    var since = Number(bot.lastOut) || 0;
-    jobs.push(fetchWithTimeout(base + "/v1/bots/me/outbox?since=" + since, {
-      headers: { Authorization: "Bearer " + bot.token },
-      cache: "no-store"
-    }, 12000).then(function (r) { return r.ok ? r.json() : null; }).then(function (data) {
-      if (!data || !Array.isArray(data.messages) || !data.messages.length) return;
-      data.messages.forEach(function (raw) {
-        var chatId = normalizeId(raw.chat_id);
-        var text = String(raw.text || "");
-        if (!chatId || !text) return;
-        var key = "dm:" + chatId;
-        if (!state.contacts[chatId]) state.contacts[chatId] = { id: chatId, name: defaultName(chatId), emoji: "🙂", publicKey: "", wallet: "", lastSeen: 0, followers: [], following: [] };
-        if (!state.threads[key]) state.threads[key] = { peer: chatId, room: roomSlug(), messages: [], unread: 0, lastTs: 0 };
-        var thread = state.threads[key];
-        var mid = "api-" + raw.message_id;
-        var exists = thread.messages.some(function (m) { return m.id === mid; });
-        if (exists) return;
-        var duplicate = thread.messages.some(function (m) {
-          return !m.mine && m.text === text && Math.abs((Number(m.ts) || 0) - (Number(raw.created_at) || 0)) < 20000;
-        });
-        if (duplicate) return;
-        thread.messages.push({
-          id: mid,
-          from: bot.id,
-          name: bot.name,
-          text: text,
-          image: "",
-          ts: Number(raw.created_at) || Date.now(),
-          mine: false,
-          status: "sent",
-          token: null,
-          airdrop: null
-        });
-        thread.lastTs = Number(raw.created_at) || Date.now();
-        if (!(ui.mode === "thread" && ui.peer === chatId)) thread.unread = (thread.unread || 0) + 1;
-        changed = true;
-      });
-      if (data.next_since) bot.lastOut = data.next_since;
-      if (data.messages.length) bot.apiAlive = true;
-      saveState();
-    }).catch(function () {}));
-  });
-  if (!jobs.length) return Promise.resolve();
-  return Promise.all(jobs).then(function () { if (changed) render(); });
-}
 function schedulePoll(delay) {
   if (!running) return;
   if (pollTimer) clearTimeout(pollTimer);
@@ -735,56 +685,6 @@ function revokeVerified(id) {
   var target = normalizeId(id);
   if (!target) return;
   publishVerifiedRevoke(target).then(function () { toast("Badge removed from " + target); }).catch(function (e) { toast("Could not remove: " + (e && e.message ? e.message : String(e)), 6000); });
-}
-function connectBot() {
-  if (!state) return;
-  var input = document.getElementById("botToken");
-  var token = String(input && input.value || "").trim();
-  if (!token) { toast("Paste a bot token from BotFather first"); return; }
-  var base = apiBase();
-  if (!base) { toast("Set the Community Bot API base URL first"); return; }
-  toast("Connecting to the bot API…", 2000);
-  fetchWithTimeout(base + "/v1/bots/me", {
-    headers: { Authorization: "Bearer " + token, Accept: "application/json" },
-    cache: "no-store"
-  }, 15000).then(function (r) {
-    if (!r.ok) throw new Error(r.status === 401 ? "That token was rejected" : "API returned HTTP " + r.status);
-    return r.json();
-  }).then(function (data) {
-    var info = data && data.bot;
-    if (!info || !info.username) throw new Error("The API did not return a bot");
-    var id = normalizeId(info.id) || generateBotId();
-    if (!state.bots) state.bots = [];
-    var existing = null;
-    state.bots.forEach(function (bot) {
-      if (!existing && bot && (bot.username === info.username || bot.id === id)) existing = bot;
-    });
-    if (!existing) { existing = { createdAt: Date.now(), description: "", commands: [] }; state.bots.push(existing); }
-    existing.id = id;
-    existing.name = info.name || info.username;
-    existing.username = info.username;
-    existing.token = token;
-    existing.api = true;
-    existing.apiAlive = true;
-    existing.description = String(info.description || existing.description || "");
-    if (Array.isArray(info.commands)) existing.commands = info.commands;
-    ensureBotContact(existing);
-    saveState();
-    if (input) input.value = "";
-    openThread(existing.id);
-    toast("Connected @" + existing.username + ". Say hi!");
-  }).catch(function (e) {
-    toast("Could not connect: " + (e && e.message ? e.message : String(e)), 6000);
-  });
-}
-function saveApiBase() {
-  if (!state) return;
-  var input = document.getElementById("apiInput");
-  var value = cleanRelay(input && input.value);
-  state.settings.apiBase = value;
-  saveState();
-  render();
-  toast(value ? "Bot API saved" : "Bot API cleared");
 }
 function unlockDev() {
   if (!state) return;
@@ -1125,38 +1025,10 @@ function handleBotMessage(bot, text, thread) {
   thread.unread = 0;
   saveState();
   render();
-  var base = apiBase();
-  var sentToApi = false;
-  if (base) {
-    sentToApi = true;
-    fetchWithTimeout(base + "/v1/bots/" + encodeURIComponent(bot.username) + "/sendMessage", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ from: state.user.id, text: clean }),
-      cache: "no-store"
-    }, 12000).then(function (r) { return r.ok; }).catch(function () { return false; });
-  }
-  if (!sentToApi || !bot.api || !bot.apiAlive) {
-    thread.messages.push({ id: uid(), from: bot.id, name: bot.name, text: botReply(bot, clean), image: "", ts: Date.now(), mine: false, status: "sent", token: null, airdrop: null });
-    thread.lastTs = Date.now();
-    saveState();
-    render();
-  }
-}
-function apiBase() { return state && state.settings ? cleanRelay(state.settings.apiBase) : ""; }
-function registerBotWithApi(bot) {
-  var base = apiBase();
-  if (!base || !bot) return Promise.resolve(null);
-  return fetchWithTimeout(base + "/v1/bots", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: bot.name, username: bot.username, owner: state.user.id }), cache: "no-store" }, 15000)
-    .then(function (r) { return r.json().catch(function () { return null; }); })
-    .then(function (data) {
-      if (!data || !data.bot || !data.bot.token) return null;
-      bot.token = String(data.bot.token);
-      if (data.bot.id) bot.id = String(data.bot.id);
-      bot.api = true;
-      saveState();
-      return bot;
-    }).catch(function () { return null; });
+  thread.messages.push({ id: uid(), from: bot.id, name: bot.name, text: botReply(bot, clean), image: "", ts: Date.now(), mine: false, status: "sent", token: null, airdrop: null });
+  thread.lastTs = Date.now();
+  saveState();
+  render();
 }
 function botFatherReply(text) {
   if (!state.bots) state.bots = [];
@@ -1182,7 +1054,6 @@ function botFatherReply(text) {
     state.bots.push(bot);
     ensureBotContact(bot);
     saveState();
-    registerBotWithApi(bot);
     return "Done! Bot created:\nName: " + name + "\nUsername: @" + username + "\nCommunity ID: " + bot.id + "\nToken: " + bot.token + "\n\nOpen Chats and tap @" + username + " to DM it. Use /setcommands " + username + " start:Say hello,help:Show help to add commands.";
   }
   if (command === "/mybots") {
@@ -2109,6 +1980,56 @@ function toggleThreadSearch() {
   var input = document.getElementById("searchInput");
   if (input) input.focus();
 }
+function createGame() {
+  if (!state) return;
+  if (!state.games) state.games = [];
+  if (state.games.length >= 10) { toast("Game limit reached (10)"); return; }
+  var nameInput = document.getElementById("gameName");
+  var typeInput = document.getElementById("gameType");
+  var stakeInput = document.getElementById("gameStake");
+  var name = String(nameInput && nameInput.value || "").trim();
+  if (!name) { toast("Enter a game name"); return; }
+  var type = typeInput ? typeInput.value : "dice";
+  var stake = String(stakeInput && stakeInput.value || "1").trim() || "1";
+  state.games.push({ id: uid(), name: name, type: type, stake: stake, creator: state.user.id, createdAt: Date.now(), plays: 0 });
+  saveState();
+  toast("Game created");
+  render();
+}
+function deleteGame(id) {
+  if (!state || !state.games) return;
+  state.games = state.games.filter(function (g) { return g.id !== id; });
+  saveState();
+  render();
+}
+function playGame(id) {
+  if (!state || !state.games) return;
+  var game = state.games.filter(function (g) { return g.id === id; })[0];
+  if (!game) return;
+  game.plays = (game.plays || 0) + 1;
+  var win = false;
+  if (game.type === "dice") win = Math.floor(Math.random() * 6) + 1 >= 4;
+  else if (game.type === "coin") win = Math.random() < 0.5;
+  else if (game.type === "guess") win = Math.random() < 0.35;
+  if (!state.gameScores) state.gameScores = {};
+  if (win) {
+    var pts = Math.max(1, Math.round(parseFloat(game.stake) || 1) * 10);
+    state.gameScores[state.user.id] = (state.gameScores[state.user.id] || 0) + pts;
+    toast("You won " + pts + " points!");
+  } else {
+    toast("You lost. Try again!");
+  }
+  saveState();
+  render();
+}
+function claimHdo() {
+  if (!state) return;
+  var pts = state.gameScores && state.gameScores[state.user.id] ? state.gameScores[state.user.id] : 0;
+  if (pts <= 0) { toast("No points to claim"); return; }
+  // Convert points to a claimable balance note; actual HDO payout is done
+  // manually via Wallet -> Send tokens to the winner's address.
+  toast("You have " + pts + " points. Use Wallet to send HDO to a winner's address.", 5000);
+}
 function applySearch() {
   var input = document.getElementById("searchInput");
   var raw = String(input && input.value || "");
@@ -2149,8 +2070,8 @@ function render() {
 }
 function renderStatus() { /* status is shown in the Me tab */ }
 function renderTabs() {
-  var tabs = ["chats", "people", "wallet", "me"];
-  var labels = { chats: "Chats", people: "People", wallet: "Wallet", me: "Me" };
+  var tabs = ["chats", "people", "games", "wallet", "me"];
+  var labels = { chats: "Chats", people: "People", games: "Games", wallet: "Wallet", me: "Me" };
   var html = '<div class="cm-topbar">' +
     '<img class="cm-logo" src="icon.png" alt="Community Chat">' +
     '<h1>Community Chat</h1>' +
@@ -2164,6 +2085,7 @@ function renderTabs() {
   html += '<div class="cm-content">';
   if (ui.tab === "chats") html += renderChats();
   else if (ui.tab === "people") html += renderPeople();
+  else if (ui.tab === "games") html += renderGames();
   else if (ui.tab === "wallet") html += renderWallet();
   else html += renderMe();
   html += "</div>";
@@ -2232,6 +2154,40 @@ function renderPeople() {
   html += "</div>";
   return html;
 }
+function renderGames() {
+  if (!state.games) state.games = [];
+  if (!state.gameScores) state.gameScores = {};
+  var html = '<div class="cm-card"><h3>Game Room</h3><p class="cm-muted">Create up to 10 games. Play to earn points and claim HDO rewards.</p></div>';
+  // create form
+  if (state.games.length < 10) {
+    html += '<div class="cm-card"><h3>Create game</h3>' +
+      '<div class="cm-inline"><input class="cm-input" id="gameName" placeholder="Game name"><select class="cm-input" id="gameType"><option value="dice">Dice roll</option><option value="coin">Coin flip</option><option value="guess">Number guess</option></select></div>' +
+      '<div class="cm-inline"><input class="cm-input" id="gameStake" placeholder="Stake (HDO)" value="1"><button class="cm-btn primary" data-action="create-game">Create</button></div>' +
+      '<p class="cm-muted">Games created: ' + state.games.length + '/10</p></div>';
+  } else {
+    html += '<div class="cm-card"><p class="cm-muted">You have reached the 10-game limit.</p></div>';
+  }
+  // games list
+  html += '<div class="cm-card"><h3>Games</h3>';
+  if (!state.games.length) html += '<p class="cm-muted">No games yet. Create one above.</p>';
+  state.games.forEach(function (g, idx) {
+    html += '<div class="cm-row" style="flex-direction:column;align-items:stretch;gap:6px">' +
+      '<div><b>' + escapeHTML(g.name) + '</b> <span class="cm-muted">(' + escapeHTML(g.type) + ')</span></div>' +
+      '<div class="cm-muted">Stake: ' + escapeHTML(g.stake) + ' HDO · plays: ' + g.plays + ' · by ' + escapeHTML(g.creator || "anon") + '</div>' +
+      '<div class="cm-btn-row"><button class="cm-btn primary" data-action="play-game" data-id="' + escapeHTML(g.id) + '">Play</button><button class="cm-btn" data-action="delete-game" data-id="' + escapeHTML(g.id) + '">Delete</button></div>' +
+      '</div>';
+  });
+  html += '</div>';
+  // leaderboard
+  var scores = Object.keys(state.gameScores).map(function (k) { return { id: k, pts: state.gameScores[k] }; }).sort(function (a, b) { return b.pts - a.pts; });
+  html += '<div class="cm-card"><h3>Leaderboard</h3>';
+  if (!scores.length) html += '<p class="cm-muted">No scores yet.</p>';
+  scores.slice(0, 10).forEach(function (s, i) {
+    html += '<div class="cm-row"><span class="cm-avatar cm-avatar-sm">' + (i + 1) + '</span><div style="flex:1"><div class="cm-rowname">' + escapeHTML(s.id) + '</div><div class="cm-rowsub">' + s.pts + ' pts</div></div></div>';
+  });
+  html += '<div class="cm-btn-row"><button class="cm-btn" data-action="claim-hdo">Claim HDO reward</button></div></div>';
+  return html;
+}
 function renderMe() {
   var html = '<div class="cm-card"><h3>Profile</h3><div class="cm-inline"><input class="cm-input" id="nameInput" value="' + escapeHTML(state.user.name) + '"><button class="cm-btn primary" data-action="save-name">Save</button></div><p class="cm-muted">ID: <span class="cm-idbox">' + escapeHTML(state.user.id) + '</span></p><div class="cm-btn-row"><button class="cm-btn" data-action="copy-id">Copy ID</button></div></div>';
   html += '<div class="cm-card"><h3>Relay</h3><div class="cm-inline"><input class="cm-input" id="relayInput" value="' + escapeHTML(state.settings.relay) + '"><button class="cm-btn primary" data-action="save-relay">Save</button></div><p class="cm-muted">Default: community-relay.hdo-box.workers.dev. Everyone must use the same relay.</p></div>';
@@ -2242,8 +2198,8 @@ function renderMe() {
       return '<button class="cm-botrow" data-action="open-bot" data-id="' + escapeHTML(bot.id) + '"><span class="cm-avatar" style="width:34px;height:34px;font-size:17px">🤖</span><span class="cm-botrow-main"><b>@' + escapeHTML(bot.username) + '</b><small>' + escapeHTML(bot.name) + " · " + escapeHTML(bot.id) + '</small></span><span class="cm-botrow-go">›</span></button>';
     }).join("") + "</div>";
   }
-  html += '<label class="cm-label" for="botToken">Connect an existing bot</label><div class="cm-inline"><input class="cm-input" id="botToken" type="password" placeholder="cmb_…" autocomplete="off"><button class="cm-btn" data-action="connect-bot">Connect</button></div><p class="cm-muted">Paste a bot token to talk to a bot that already runs on a server (for example a Python bot using <code>community-bot/</code>).</p>';
-  html += '<label class="cm-label" for="apiInput">Community Bot API base URL</label><div class="cm-inline"><input class="cm-input" id="apiInput" value="' + escapeHTML(state.settings.apiBase || "") + '" placeholder="' + escapeHTML(DEFAULT_API) + '"><button class="cm-btn primary" data-action="save-api">Save</button></div><p class="cm-muted">Bots are registered with <code>' + escapeHTML(DEFAULT_API) + '</code>. Clear the field and save to keep new bots on this phone only.</p></div>';
+
+
   html += '<div class="cm-card"><h3>Admin</h3>' + (isAdmin()
     ? '<p class="cm-muted">Admin mode is ON' + (state.user.id === DEV_ID ? "" : " (unlocked)") + '. Grant verified badges in People.</p><div class="cm-btn-row"><button class="cm-btn danger" data-action="lock-dev">Turn off admin mode</button></div>'
     : '<p class="cm-muted">Enter the admin code to unlock verified-badge tools.</p><div class="cm-inline"><input class="cm-input" id="devCode" type="password" placeholder="Admin code"><button class="cm-btn primary" data-action="unlock-dev">Unlock</button></div>') + "</div>";
@@ -2407,7 +2363,6 @@ function bindActions() {
       else if (action === "view-profile") openProfileModal(node.dataset.id);
       else if (action === "open-botfather") openBotFather();
       else if (action === "open-bot") openThread(node.dataset.id);
-      else if (action === "connect-bot") connectBot();
       else if (action === "toggle-search") toggleThreadSearch();
       else if (action === "set-wallpaper") setWallpaper(node.dataset.value);
       else if (action === "save-api") saveApiBase();

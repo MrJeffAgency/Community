@@ -527,3 +527,19 @@ html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, -apple
   background-image: linear-gradient(180deg, color-mix(in srgb, #46508f 42%, var(--cm-bg)), color-mix(in srgb, #0b1020 68%, var(--cm-bg))), radial-gradient(color-mix(in srgb, #ffffff 22%, transparent) 1px, transparent 1px);
   background-size: auto, 28px 28px;
 }
+
+/* ---------- Mobile-first responsive polish ---------- */
+@media (max-width: 400px) {
+  .cm-topbar h1 { font-size: 16px; }
+  .cm-tab { font-size: 13px; padding: 10px 6px; }
+  .cm-btn { min-height: 40px; padding: 0 10px; font-size: 13px; }
+  .cm-input { min-height: 40px; font-size: 15px; }
+  .cm-row { min-height: 52px; }
+  .cm-card { padding: 12px; }
+}
+@media (min-width: 768px) {
+  .cm-app { max-width: 520px; box-shadow: 0 0 40px rgba(0,0,0,.15); border-radius: 16px; margin-top: 24px; height: calc(100vh - 48px); }
+  body { background: var(--cm-bg); }
+}
+.cm-btn, .cm-tab, .cm-row, .cm-chip { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.cm-input, .cm-btn { font-size: 16px; }
