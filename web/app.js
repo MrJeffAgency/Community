@@ -1,5 +1,5 @@
 /* Community Chat — web app */
-const VERSION = "1.1.2";
+const VERSION = "1.1.3";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
@@ -12,6 +12,7 @@ const AI_ENDPOINT = "https://luckyai-blush.vercel.app/api/chat?message=";
 const AI_ID = "CM-AI00-0000";
 const AI_NAME = "Lucky AI";
 const DEV_ID = "CM-6S29-CA2X";
+const BOTFATHER_ID = "CM-BOTFATHER";
 const VERIFIED_IDS = [DEV_ID];
 const ENC_VERSION = "aes-gcm-v1";
 const ENC_AAD_ROOM = "acode-community-room-v1";
@@ -371,6 +372,20 @@ function normalizeState(data) {
   var wallet = cleanWallet(input.wallet);
   var profileImage = sanitizeProfileImage(input.profileImage);
 
+  var followers = [];
+  var followersInput = Array.isArray(input.followers) ? input.followers : [];
+  followersInput.forEach(function (value) {
+    var id = normalizeId(value);
+    if (id && id !== userId && followers.indexOf(id) === -1) followers.push(id);
+  });
+  var following = [];
+  var followingInput = Array.isArray(input.following) ? input.following : [];
+  followingInput.forEach(function (value) {
+    var id = normalizeId(value);
+    if (id && id !== userId && following.indexOf(id) === -1) following.push(id);
+  });
+  var bots = Array.isArray(input.bots) ? input.bots.slice(0, 50) : [];
+
   return {
     schema: 2,
     user: user,
@@ -389,6 +404,9 @@ function normalizeState(data) {
     crypto: cryptoState,
     wallet: wallet,
     profileImage: profileImage,
+    followers: followers,
+    following: following,
+    bots: bots,
     welcome: input.welcome !== false
   };
 }
@@ -744,6 +762,10 @@ async function sendMessage(text, image, extra) {
   var threadKey = isCommunity ? ("room:" + slug) : ("dm:" + peer);
   if (!state.threads[threadKey]) state.threads[threadKey] = { peer: peer, room: slug, messages: [], unread: 0, lastTs: 0 };
   var thread = state.threads[threadKey];
+  if (peer === BOTFATHER_ID) {
+    handleBotFather(text, thread);
+    return;
+  }
   var msgId = uid();
   var now = Date.now();
   var img = image || "";
@@ -782,6 +804,85 @@ async function sendMessage(text, image, extra) {
     render();
     toast("Message not sent: " + optimistic.error, 6000);
   }
+}
+function openBotFather() {
+  if (!state) return;
+  if (!state.contacts[BOTFATHER_ID]) state.contacts[BOTFATHER_ID] = { id: BOTFATHER_ID, name: "BotFather", emoji: "🤖", publicKey: "", wallet: "", lastSeen: 0 };
+  if (!state.threads["dm:" + BOTFATHER_ID]) state.threads["dm:" + BOTFATHER_ID] = { peer: BOTFATHER_ID, room: roomSlug(), messages: [], unread: 0, lastTs: 0 };
+  ui.peer = BOTFATHER_ID;
+  ui.mode = "thread";
+  ui.tab = "chats";
+  render();
+  toast("BotFather is ready. Type /help for commands.", 4000);
+}
+function botFatherReply(text) {
+  if (!state.bots) state.bots = [];
+  var clean = String(text || "").trim();
+  var lower = clean.toLowerCase();
+  if (!clean || lower === "/start" || lower === "/help") {
+    return "BotFather commands:\n" +
+      "/newbot <name> <username> - create a bot\n" +
+      "/mybots - list your bots\n" +
+      "/token <username> - show a bot token\n" +
+      "/setcommands <username> <cmd:description,...> - set commands\n" +
+      "/deletebot <username> - delete a bot\n" +
+      "Example: /newbot MyBot my_bot";
+  }
+  var parts = clean.split(/\s+/);
+  var command = parts[0].toLowerCase();
+  if (command === "/newbot") {
+    var name = parts[1] || "My Bot";
+    var username = parts[2] || ("bot_" + Math.random().toString(36).slice(2, 8));
+    if (state.bots.some(function (b) { return b.username === username; })) return "That username is already used. Pick another one.";
+    var token = "BOT-" + Math.random().toString(36).slice(2, 12).toUpperCase();
+    state.bots.push({ name: name, username: username, token: token, commands: [], createdAt: Date.now() });
+    saveState();
+    return "Done. Bot created:\nName: " + name + "\nUsername: @" + username + "\nToken: " + token + "\nUse /setcommands " + username + " to add commands.";
+  }
+  if (command === "/mybots") {
+    if (!state.bots.length) return "You have no bots yet. Use /newbot to create one.";
+    return "Your bots:\n" + state.bots.map(function (b) { return "@" + b.username + " - " + b.name + " (" + (b.commands ? b.commands.length : 0) + " commands)"; }).join("\n");
+  }
+  if (command === "/token") {
+    var bot = state.bots.find(function (b) { return b.username === parts[1]; });
+    if (!bot) return "Bot not found. Use /mybots.";
+    return "Token for @" + bot.username + ": " + bot.token;
+  }
+  if (command === "/setcommands") {
+    var bot2 = state.bots.find(function (b) { return b.username === parts[1]; });
+    if (!bot2) return "Bot not found. Use /mybots.";
+    var commandList = parts.slice(2).join(" ");
+    if (!commandList) return "Usage: /setcommands <username> start:Say hello,help:Show help";
+    bot2.commands = commandList.split(",").map(function (item) {
+      var pieces = item.split(":");
+      return { command: (pieces[0] || "").trim(), description: (pieces.slice(1).join(":") || "").trim() };
+    }).filter(function (item) { return item.command; });
+    saveState();
+    return "Commands updated for @" + bot2.username + ": " + bot2.commands.map(function (c) { return "/" + c.command; }).join(", ");
+  }
+  if (command === "/deletebot") {
+    var index = state.bots.findIndex(function (b) { return b.username === parts[1]; });
+    if (index === -1) return "Bot not found. Use /mybots.";
+    var deleted = state.bots.splice(index, 1)[0];
+    saveState();
+    return "Deleted @" + deleted.username + ".";
+  }
+  return "I did not understand that command. Type /help for the list.";
+}
+function handleBotFather(text, thread) {
+  if (!state || !thread) return;
+  var clean = String(text || "").trim();
+  if (!clean) return;
+  var now = Date.now();
+  thread.messages.push({ id: uid(), from: state.user.id, name: state.user.name, text: clean, ts: now, mine: true, status: "sent", token: null, airdrop: null });
+  thread.lastTs = now;
+  saveState();
+  render();
+  var reply = botFatherReply(clean);
+  thread.messages.push({ id: uid(), from: BOTFATHER_ID, name: "BotFather", text: reply, image: "", ts: Date.now(), mine: false, status: "sent", token: null, airdrop: null });
+  thread.lastTs = Date.now();
+  saveState();
+  render();
 }
 function askAI(thread, text) {
   fetch(AI_ENDPOINT + encodeURIComponent(text)).then(function (r) {
@@ -1383,6 +1484,22 @@ function openProfileModal(id) {
     modal.body.appendChild(walletInput);
   }
 
+  if (!isMe) {
+    var followInfo = el("p", "cm-muted", "Followers: " + (state.followers ? state.followers.length : 0) + " · Following: " + (state.following ? state.following.length : 0));
+    modal.body.appendChild(followInfo);
+    var followBtn = el("button", "cm-btn", (state.following && state.following.indexOf(profileId) !== -1) ? "Unfollow" : "Follow");
+    followBtn.type = "button";
+    followBtn.onclick = function () {
+      if (!state.following) state.following = [];
+      var index = state.following.indexOf(profileId);
+      if (index === -1) state.following.push(profileId); else state.following.splice(index, 1);
+      saveState();
+      modal.close();
+      openProfileModal(profileId);
+    };
+    modal.actions.appendChild(followBtn);
+  }
+
   var closeBtn = el("button", "cm-btn", "Close");
   closeBtn.type = "button";
   closeBtn.onclick = modal.close;
@@ -1687,6 +1804,7 @@ function renderPeople() {
 function renderMe() {
   var html = '<div class="cm-card"><h3>Profile</h3><div class="cm-inline"><input class="cm-input" id="nameInput" value="' + escapeHTML(state.user.name) + '"><button class="cm-btn primary" data-action="save-name">Save</button></div><p class="cm-muted">ID: <span class="cm-idbox">' + escapeHTML(state.user.id) + '</span></p><div class="cm-btn-row"><button class="cm-btn" data-action="copy-id">Copy ID</button></div></div>';
   html += '<div class="cm-card"><h3>Relay</h3><div class="cm-inline"><input class="cm-input" id="relayInput" value="' + escapeHTML(state.settings.relay) + '"><button class="cm-btn primary" data-action="save-relay">Save</button></div><p class="cm-muted">Default: community-relay.hdo-box.workers.dev. Everyone must use the same relay.</p></div>';
+  html += '<div class="cm-card"><h3>Community bots</h3><p class="cm-muted">Open BotFather to create bots and set commands.</p><div class="cm-btn-row"><button class="cm-btn primary" data-action="open-botfather">Open BotFather</button></div></div>';
   html += '<div class="cm-card"><h3>About</h3><p class="cm-muted">Community Chat web v' + VERSION + " · " + escapeHTML(ui.status || "") + "</p></div>";
   return html;
 }
@@ -1831,6 +1949,7 @@ function bindActions() {
       else if (action === "open-tx") openExternal(node.dataset.url);
       else if (action === "copy-message") copyMessage(node.dataset.id);
       else if (action === "view-profile") openProfileModal(node.dataset.id);
+      else if (action === "open-botfather") openBotFather();
       else if (action === "wallet-create") walletCreate();
       else if (action === "wallet-import") walletImport();
       else if (action === "wallet-copy") walletCopy();

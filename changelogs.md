@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.9.4
+- Added followers/following counts and follow controls in user profiles.
+- Added a Community BotFather chat for creating bots, setting commands and managing tokens.
+- Admin verified-badge flow reviewed.
+
 ## 1.9.2
 - Users can now set the **Max claims** when creating an airdrop in a room or direct chat. The creator enters how many people may claim the airdrop; the claim card and claim checks use that limit.
 

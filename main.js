@@ -50,6 +50,7 @@
   var AI_NAME = "Lucky AI";
   var AI_WELCOME_ID = "ai-welcome-v1";
   var DEV_ID = "CM-6S29-CA2X";
+  var BOTFATHER_ID = "CM-BOTFATHER";
   var DEV_NAME = "Community Dev";
   var VERIFIED_IDS = [DEV_ID];
 
@@ -1814,6 +1815,22 @@
     var wallet = cleanWallet(input.wallet);
     var walletArchive = cleanWalletArchive(input.walletArchive);
 
+    var followers = [];
+    var followersInput = Array.isArray(input.followers) ? input.followers : [];
+    followersInput.forEach(function (value) {
+      var id = normalizeId(value);
+      if (id && id !== userId && followers.indexOf(id) === -1) followers.push(id);
+    });
+
+    var following = [];
+    var followingInput = Array.isArray(input.following) ? input.following : [];
+    followingInput.forEach(function (value) {
+      var id = normalizeId(value);
+      if (id && id !== userId && following.indexOf(id) === -1) following.push(id);
+    });
+
+    var bots = Array.isArray(input.bots) ? input.bots.slice(0, 50) : [];
+
     var cryptoInput = input.crypto && typeof input.crypto === "object" ? input.crypto : {};
     var cryptoState = {
       publicKey: cleanPublicKey(cryptoInput.publicKey),
@@ -1841,6 +1858,9 @@
       crypto: cryptoState,
       wallet: wallet,
       walletArchive: walletArchive,
+      followers: followers,
+      following: following,
+      bots: bots,
       welcome: input.welcome !== false
     };
   }
@@ -2670,6 +2690,14 @@
       return;
     }
 
+    if (peer === BOTFATHER_ID) {
+      input.value = "";
+      input.style.height = "auto";
+      updateComposer();
+      handleBotFather(text, thread);
+      return;
+    }
+
     var slug = roomSlug();
     var topic = peer === "community" ? topicFor(slug) : dmTopicFor(peer);
 
@@ -3148,6 +3176,121 @@
         }
         updateComposer();
       });
+  }
+
+  function botFatherReply(text) {
+    if (!state.bots) state.bots = [];
+    var clean = String(text || "").trim();
+    var lower = clean.toLowerCase();
+    if (!clean || lower === "/start" || lower === "/help") {
+      return "BotFather commands:\n" +
+        "/newbot <name> <username> - create a bot\n" +
+        "/mybots - list your bots\n" +
+        "/token <username> - show a bot token\n" +
+        "/setcommands <username> <cmd:description,...> - set commands\n" +
+        "/deletebot <username> - delete a bot\n" +
+        "Example: /newbot MyBot my_bot";
+    }
+    var parts = clean.split(/\s+/);
+    var command = parts[0].toLowerCase();
+    if (command === "/newbot") {
+      var name = parts[1] || "My Bot";
+      var username = parts[2] || ("bot_" + Math.random().toString(36).slice(2, 8));
+      if (state.bots.some(function (b) { return b.username === username; })) {
+        return "That username is already used. Pick another one.";
+      }
+      var token = "BOT-" + Math.random().toString(36).slice(2, 12).toUpperCase();
+      state.bots.push({ name: name, username: username, token: token, commands: [], createdAt: Date.now() });
+      saveState();
+      return "Done. Bot created:\nName: " + name + "\nUsername: @" + username + "\nToken: " + token + "\nUse /setcommands " + username + " to add commands.";
+    }
+    if (command === "/mybots") {
+      if (!state.bots.length) return "You have no bots yet. Use /newbot to create one.";
+      return "Your bots:\n" + state.bots.map(function (b) {
+        return "@" + b.username + " - " + b.name + " (" + (b.commands ? b.commands.length : 0) + " commands)";
+      }).join("\n");
+    }
+    if (command === "/token") {
+      var bot = state.bots.find(function (b) { return b.username === parts[1]; });
+      if (!bot) return "Bot not found. Use /mybots.";
+      return "Token for @" + bot.username + ": " + bot.token;
+    }
+    if (command === "/setcommands") {
+      var bot2 = state.bots.find(function (b) { return b.username === parts[1]; });
+      if (!bot2) return "Bot not found. Use /mybots.";
+      var commandList = parts.slice(2).join(" ");
+      if (!commandList) return "Usage: /setcommands <username> start:Say hello,help:Show help";
+      bot2.commands = commandList.split(",").map(function (item) {
+        var pieces = item.split(":");
+        return { command: (pieces[0] || "").trim(), description: (pieces.slice(1).join(":") || "").trim() };
+      }).filter(function (item) { return item.command; });
+      saveState();
+      return "Commands updated for @" + bot2.username + ": " + bot2.commands.map(function (c) { return "/" + c.command; }).join(", ");
+    }
+    if (command === "/deletebot") {
+      var index = state.bots.findIndex(function (b) { return b.username === parts[1]; });
+      if (index === -1) return "Bot not found. Use /mybots.";
+      var deleted = state.bots.splice(index, 1)[0];
+      saveState();
+      return "Deleted @" + deleted.username + ".";
+    }
+    // Unknown command: report to admin.
+    try {
+      var contact = upsertContact(DEV_ID, DEV_NAME, "🛡️", false);
+      if (contact) {
+        // Best effort: do not block the reply.
+        publish({
+          app: APP_TAG,
+          v: ENVELOPE_VERSION,
+          id: uid(),
+          from: state.user.id,
+          name: state.user.name,
+          to: DEV_ID,
+          type: "secure",
+          text: "BotFather error from " + state.user.id + ": " + clean,
+          ts: Date.now()
+        }, dmTopicFor(DEV_ID)).catch(function () {});
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return "I did not understand that command. Type /help for the list. The error was reported to the admin.";
+  }
+
+  function handleBotFather(text, thread) {
+    if (!state || !thread) return;
+    var clean = String(text || "").slice(0, MAX_TEXT).trim();
+    if (!clean) return;
+    var now = Date.now();
+    thread.messages.push({
+      id: uid(),
+      from: state.user.id,
+      name: state.user.name,
+      text: clean,
+      ts: now,
+      mine: true,
+      status: "sent"
+    });
+    thread.lastTs = now;
+    thread.unread = 0;
+    saveState();
+    if (ui.mode === "thread" && ui.peer === thread.peer) renderThreadMessages(true);
+
+    var reply = botFatherReply(clean);
+    var botMsg = {
+      id: uid(),
+      from: BOTFATHER_ID,
+      name: "BotFather",
+      text: reply,
+      ts: Date.now(),
+      mine: false,
+      status: "sent"
+    };
+    thread.messages.push(botMsg);
+    thread.lastTs = botMsg.ts;
+    saveState();
+    if (ui.mode === "thread" && ui.peer === thread.peer) renderThreadMessages();
+    updateSidebar();
   }
 
   function retryMessage(messageId) {
@@ -4139,6 +4282,17 @@
       "</div>" +
 
       '<div class="cm-card">' +
+        "<h3>Community bots</h3>" +
+        "<p>Create and manage Telegram-style bots. Open BotFather to create a bot, set commands and get a token.</p>" +
+        '<div class="cm-button-row">' +
+          '<button type="button" class="cm-btn primary" data-action="open-botfather">Open BotFather</button>' +
+        "</div>" +
+        (state.bots && state.bots.length
+          ? '<p class="cm-muted">Your bots: ' + state.bots.map(function (bot) { return escapeHTML(bot.username || bot.name); }).join(", ") + "</p>"
+          : '<p class="cm-muted">No bots yet.</p>') +
+      "</div>" +
+
+      '<div class="cm-card">' +
         "<h3>Notifications</h3>" +
         '<label class="cm-toggle">' +
           '<input type="checkbox" data-role="notify" ' + (state.settings.notify ? "checked" : "") + '>' +
@@ -4428,6 +4582,8 @@
       removeContact(target.dataset.id);
     } else if (action === "thread-menu") {
       threadMenu();
+    } else if (action === "open-botfather") {
+      openBotFather();
     } else if (action === "export") {
       exportModal();
     } else if (action === "import") {
@@ -4790,6 +4946,24 @@
     saveState();
     openThread(DEV_ID);
     toastMsg("Ask for a verified badge and include your profile ID " + state.user.id, 6500);
+  }
+
+  function ensureBotFatherContact() {
+    if (!state) return null;
+    var contact = upsertContact(BOTFATHER_ID, "BotFather", "🤖", false);
+    if (contact) {
+      contact.auto = false;
+      if (!contact.alias) contact.name = "BotFather";
+    }
+    return contact;
+  }
+
+  function openBotFather() {
+    if (!state) return;
+    ensureBotFatherContact();
+    saveState();
+    openThread(BOTFATHER_ID);
+    toastMsg("BotFather is ready. Type /help for commands.", 4000);
   }
 
   function removeContact(id) {    if (!state) return;
@@ -5263,6 +5437,31 @@
         ? "Verified profile ✓"
         : "This profile is not verified.");
       modal.body.appendChild(verifiedText);
+
+      var followBox = cmEl("div", "cm-profile-follow");
+      var followersCount = state.followers && state.followers.indexOf(profileId) !== -1 ? 1 : 0;
+      var followingCount = state.following && state.following.indexOf(profileId) !== -1 ? 1 : 0;
+      followBox.textContent = "Followers: " + (state.followers ? state.followers.length : 0) +
+        " · Following: " + (state.following ? state.following.length : 0);
+      modal.body.appendChild(followBox);
+
+      var followBtn = cmEl("button", "cm-btn", state.following && state.following.indexOf(profileId) !== -1 ? "Unfollow" : "Follow");
+      followBtn.type = "button";
+      followBtn.onclick = function () {
+        if (!state.following) state.following = [];
+        var index = state.following.indexOf(profileId);
+        if (index === -1) {
+          state.following.push(profileId);
+          toastMsg("Following " + profileId);
+        } else {
+          state.following.splice(index, 1);
+          toastMsg("Unfollowed " + profileId);
+        }
+        saveState();
+        modal.close();
+        openProfileModal(profileId);
+      };
+      modal.actions.appendChild(followBtn);
     }
 
     var closeBtn = cmEl("button", "cm-btn", "Close");
