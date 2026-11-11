@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.9
+- **Connect an existing bot.** In **Me → Community bots** you can paste a `cmb_…` token to bring a bot that runs on a server (Python/Node) into the app. It gets a contact and a chat, and its replies appear there.
+- Chat keeps your typed message and scroll position when a bot reply arrives.
+
 ## 1.9.8
 - **Bot replies show up in the chat.** The plugin and the APK now collect messages that an API-backed bot writes with `sendMessage` (new `GET /v1/bots/me/outbox`) and append them to the bot's chat thread, so Python/Node bots talk back inside Community Chat.
 - **Python bot SDK.** Added `community-bot/community/` — a small `telegram.ext`-style SDK (`Update`, `Message.reply_text`, `Application.builder().token().build()`, `CommandHandler`, `ContextTypes`) that runs bots against the Community Bot API, plus a working example bot with `/search`, `/storage` and `/save`.

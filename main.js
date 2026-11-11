@@ -21,7 +21,7 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.9.8";
+  var VERSION = "1.9.9";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -4700,6 +4700,12 @@
                 '<span class="cm-botrow-go">›</span></button>';
             }).join("") + "</div>"
           : '<p class="cm-muted">No bots yet.</p>') +
+        '<label class="cm-label" for="cm-bot-token">Connect an existing bot</label>' +
+        '<div class="cm-inline">' +
+          '<input class="cm-input" id="cm-bot-token" data-role="bottoken" type="password" placeholder="cmb_…" spellcheck="false" autocomplete="off">' +
+          '<button type="button" class="cm-btn" data-action="connect-bot">Connect</button>' +
+        "</div>" +
+        '<p class="cm-muted">Paste a bot token to talk to a bot that already runs on a server (for example a Python bot using <code>community-bot/</code>). It appears in Chats and answers in this thread.</p>' +
         '<label class="cm-label" for="cm-api">Community Bot API base URL</label>' +
         '<div class="cm-inline">' +
           '<input class="cm-input" id="cm-api" data-role="apiinput" type="text" value="' + escapeHTML(state.settings.apiBase || "") + '" placeholder="' + escapeHTML(DEFAULT_API) + '" spellcheck="false">' +
@@ -5019,6 +5025,8 @@
       openBotFather();
     } else if (action === "open-bot") {
       openThread(target.dataset.id);
+    } else if (action === "connect-bot") {
+      connectBot();
     } else if (action === "save-api") {
       saveApiBase();
     } else if (action === "unlock-dev") {
@@ -5425,6 +5433,61 @@
     saveState();
     openThread(BOTFATHER_ID);
     toastMsg("BotFather is ready. Type /help for commands.", 4000);
+  }
+
+  function connectBot() {
+    if (!state) return;
+    var input = $root ? $root.querySelector('[data-role="bottoken"]') : null;
+    var token = String(input ? input.value : "").trim();
+    if (!token) {
+      toastMsg("Paste a bot token from BotFather first");
+      if (input) input.focus();
+      return;
+    }
+    var base = apiBase();
+    if (!base) {
+      toastMsg("Set the Community Bot API base URL first");
+      return;
+    }
+    toastMsg("Connecting to the bot API…", 2000);
+    fetchWithTimeout(base + "/v1/bots/me", {
+      headers: { Authorization: "Bearer " + token, Accept: "application/json" },
+      cache: "no-store"
+    }, 15000).then(function (response) {
+      if (!response.ok) throw new Error(response.status === 401 ? "That token was rejected" : "API returned HTTP " + response.status);
+      return response.json();
+    }).then(function (data) {
+      var info = data && data.bot;
+      if (!info || !info.username) throw new Error("The API did not return a bot");
+      var id = normalizeId(info.id) || generateBotId();
+      if (!state.bots) state.bots = [];
+      var existing = null;
+      for (var i = 0; i < state.bots.length; i += 1) {
+        if (state.bots[i] && (state.bots[i].username === info.username || state.bots[i].id === id)) {
+          existing = state.bots[i];
+          break;
+        }
+      }
+      if (!existing) {
+        existing = { createdAt: Date.now(), description: "", commands: [] };
+        state.bots.push(existing);
+      }
+      existing.id = id;
+      existing.name = info.name || info.username;
+      existing.username = info.username;
+      existing.token = token;
+      existing.api = true;
+      existing.apiAlive = true;
+      existing.description = String(info.description || existing.description || "");
+      if (Array.isArray(info.commands)) existing.commands = info.commands;
+      ensureBotContact(existing);
+      saveState();
+      if (input) input.value = "";
+      openThread(existing.id);
+      toastMsg("Connected @" + existing.username + ". Say hi!");
+    }).catch(function (error) {
+      toastMsg("Could not connect: " + (error && error.message ? error.message : String(error)), 6000);
+    });
   }
 
   function saveApiBase() {

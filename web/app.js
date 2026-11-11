@@ -1,5 +1,5 @@
 /* Community Chat — web app */
-const VERSION = "1.1.7";
+const VERSION = "1.1.8";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
@@ -734,6 +734,47 @@ function revokeVerified(id) {
   var target = normalizeId(id);
   if (!target) return;
   publishVerifiedRevoke(target).then(function () { toast("Badge removed from " + target); }).catch(function (e) { toast("Could not remove: " + (e && e.message ? e.message : String(e)), 6000); });
+}
+function connectBot() {
+  if (!state) return;
+  var input = document.getElementById("botToken");
+  var token = String(input && input.value || "").trim();
+  if (!token) { toast("Paste a bot token from BotFather first"); return; }
+  var base = apiBase();
+  if (!base) { toast("Set the Community Bot API base URL first"); return; }
+  toast("Connecting to the bot API…", 2000);
+  fetchWithTimeout(base + "/v1/bots/me", {
+    headers: { Authorization: "Bearer " + token, Accept: "application/json" },
+    cache: "no-store"
+  }, 15000).then(function (r) {
+    if (!r.ok) throw new Error(r.status === 401 ? "That token was rejected" : "API returned HTTP " + r.status);
+    return r.json();
+  }).then(function (data) {
+    var info = data && data.bot;
+    if (!info || !info.username) throw new Error("The API did not return a bot");
+    var id = normalizeId(info.id) || generateBotId();
+    if (!state.bots) state.bots = [];
+    var existing = null;
+    state.bots.forEach(function (bot) {
+      if (!existing && bot && (bot.username === info.username || bot.id === id)) existing = bot;
+    });
+    if (!existing) { existing = { createdAt: Date.now(), description: "", commands: [] }; state.bots.push(existing); }
+    existing.id = id;
+    existing.name = info.name || info.username;
+    existing.username = info.username;
+    existing.token = token;
+    existing.api = true;
+    existing.apiAlive = true;
+    existing.description = String(info.description || existing.description || "");
+    if (Array.isArray(info.commands)) existing.commands = info.commands;
+    ensureBotContact(existing);
+    saveState();
+    if (input) input.value = "";
+    openThread(existing.id);
+    toast("Connected @" + existing.username + ". Say hi!");
+  }).catch(function (e) {
+    toast("Could not connect: " + (e && e.message ? e.message : String(e)), 6000);
+  });
 }
 function saveApiBase() {
   if (!state) return;
@@ -2175,6 +2216,7 @@ function renderMe() {
       return '<button class="cm-botrow" data-action="open-bot" data-id="' + escapeHTML(bot.id) + '"><span class="cm-avatar" style="width:34px;height:34px;font-size:17px">🤖</span><span class="cm-botrow-main"><b>@' + escapeHTML(bot.username) + '</b><small>' + escapeHTML(bot.name) + " · " + escapeHTML(bot.id) + '</small></span><span class="cm-botrow-go">›</span></button>';
     }).join("") + "</div>";
   }
+  html += '<label class="cm-label" for="botToken">Connect an existing bot</label><div class="cm-inline"><input class="cm-input" id="botToken" type="password" placeholder="cmb_…" autocomplete="off"><button class="cm-btn" data-action="connect-bot">Connect</button></div><p class="cm-muted">Paste a bot token to talk to a bot that already runs on a server (for example a Python bot using <code>community-bot/</code>).</p>';
   html += '<label class="cm-label" for="apiInput">Community Bot API base URL</label><div class="cm-inline"><input class="cm-input" id="apiInput" value="' + escapeHTML(state.settings.apiBase || "") + '" placeholder="' + escapeHTML(DEFAULT_API) + '"><button class="cm-btn primary" data-action="save-api">Save</button></div><p class="cm-muted">Bots are registered with <code>' + escapeHTML(DEFAULT_API) + '</code>. Clear the field and save to keep new bots on this phone only.</p></div>';
   html += '<div class="cm-card"><h3>Admin</h3>' + (isAdmin()
     ? '<p class="cm-muted">Admin mode is ON' + (state.user.id === DEV_ID ? "" : " (unlocked)") + '. Grant verified badges in People.</p><div class="cm-btn-row"><button class="cm-btn danger" data-action="lock-dev">Turn off admin mode</button></div>'
@@ -2333,6 +2375,7 @@ function bindActions() {
       else if (action === "view-profile") openProfileModal(node.dataset.id);
       else if (action === "open-botfather") openBotFather();
       else if (action === "open-bot") openThread(node.dataset.id);
+      else if (action === "connect-bot") connectBot();
       else if (action === "save-api") saveApiBase();
       else if (action === "unlock-dev") unlockDev();
       else if (action === "lock-dev") lockDev();
