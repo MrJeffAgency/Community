@@ -1,5 +1,5 @@
 /* Community Chat — web app */
-const VERSION = "1.1.3";
+const VERSION = "1.1.4";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
@@ -834,7 +834,7 @@ function botFatherReply(text) {
     var name = parts[1] || "My Bot";
     var username = parts[2] || ("bot_" + Math.random().toString(36).slice(2, 8));
     if (state.bots.some(function (b) { return b.username === username; })) return "That username is already used. Pick another one.";
-    var token = "BOT-" + Math.random().toString(36).slice(2, 12).toUpperCase();
+    var token = "BOT-" + Math.random().toString(36).slice(2, 12).toUpperCase() + Math.random().toString(36).slice(2, 12).toUpperCase() + Math.random().toString(36).slice(2, 12).toUpperCase();
     state.bots.push({ name: name, username: username, token: token, commands: [], createdAt: Date.now() });
     saveState();
     return "Done. Bot created:\nName: " + name + "\nUsername: @" + username + "\nToken: " + token + "\nUse /setcommands " + username + " to add commands.";
@@ -1804,8 +1804,9 @@ function renderPeople() {
 function renderMe() {
   var html = '<div class="cm-card"><h3>Profile</h3><div class="cm-inline"><input class="cm-input" id="nameInput" value="' + escapeHTML(state.user.name) + '"><button class="cm-btn primary" data-action="save-name">Save</button></div><p class="cm-muted">ID: <span class="cm-idbox">' + escapeHTML(state.user.id) + '</span></p><div class="cm-btn-row"><button class="cm-btn" data-action="copy-id">Copy ID</button></div></div>';
   html += '<div class="cm-card"><h3>Relay</h3><div class="cm-inline"><input class="cm-input" id="relayInput" value="' + escapeHTML(state.settings.relay) + '"><button class="cm-btn primary" data-action="save-relay">Save</button></div><p class="cm-muted">Default: community-relay.hdo-box.workers.dev. Everyone must use the same relay.</p></div>';
+  html += '<div class="cm-card"><h3>Followers & following</h3><p class="cm-muted">Followers: ' + (state.followers ? state.followers.length : 0) + " · Following: " + (state.following ? state.following.length : 0) + "</p></div>";
   html += '<div class="cm-card"><h3>Community bots</h3><p class="cm-muted">Open BotFather to create bots and set commands.</p><div class="cm-btn-row"><button class="cm-btn primary" data-action="open-botfather">Open BotFather</button></div></div>';
-  html += '<div class="cm-card"><h3>About</h3><p class="cm-muted">Community Chat web v' + VERSION + " · " + escapeHTML(ui.status || "") + "</p></div>";
+  html += '<div class="cm-card"><h3>About</h3><p class="cm-muted">Community Chat web v' + VERSION + " · " + escapeHTML(ui.status || "") + '</p><p class="cm-muted">Made for Acode. Send feedback or ask for a verified badge by messaging ' + escapeHTML(DEV_ID) + " from the People tab.</p></div>";
   return html;
 }
 function renderWallet() {

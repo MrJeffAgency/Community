@@ -3199,7 +3199,7 @@
       if (state.bots.some(function (b) { return b.username === username; })) {
         return "That username is already used. Pick another one.";
       }
-      var token = "BOT-" + Math.random().toString(36).slice(2, 12).toUpperCase();
+      var token = "BOT-" + Math.random().toString(36).slice(2, 12).toUpperCase() + Math.random().toString(36).slice(2, 12).toUpperCase() + Math.random().toString(36).slice(2, 12).toUpperCase();
       state.bots.push({ name: name, username: username, token: token, commands: [], createdAt: Date.now() });
       saveState();
       return "Done. Bot created:\nName: " + name + "\nUsername: @" + username + "\nToken: " + token + "\nUse /setcommands " + username + " to add commands.";
@@ -4282,6 +4282,15 @@
       "</div>" +
 
       '<div class="cm-card">' +
+        "<h3>Followers & following</h3>" +
+        "<p>Followers: " + (state.followers ? state.followers.length : 0) +
+          " · Following: " + (state.following ? state.following.length : 0) + "</p>" +
+        (state.followers && state.followers.length
+          ? '<p class="cm-muted">Followers: ' + state.followers.map(escapeHTML).join(", ") + "</p>"
+          : "") +
+      "</div>" +
+
+      '<div class="cm-card">' +
         "<h3>Community bots</h3>" +
         "<p>Create and manage Telegram-style bots. Open BotFather to create a bot, set commands and get a token.</p>" +
         '<div class="cm-button-row">' +
@@ -5270,7 +5279,9 @@
     }
     publishVerifiedGrant(id).then(function (ok) {
       if (input) input.value = "";
-      toastMsg(ok ? "Verified badge granted to " + id : "Could not grant the badge. Check the relay connection.");
+      toastMsg(ok ? "Verified badge granted to " + id : "Could not grant the badge. Check the relay connection and token.");
+    }).catch(function (error) {
+      toastMsg("Could not grant: " + (error && error.message ? error.message : String(error)));
     });
   }
 
