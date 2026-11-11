@@ -1,5 +1,5 @@
 /* Community Chat — web app */
-const VERSION = "1.1.10";
+const VERSION = "1.1.11";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
@@ -1982,6 +1982,7 @@ function toggleThreadSearch() {
 }
 function createGame() {
   if (!state) return;
+  if (!isAdmin()) { toast("Only the admin can create games"); return; }
   if (!state.games) state.games = [];
   if (state.games.length >= 10) { toast("Game limit reached (10)"); return; }
   var nameInput = document.getElementById("gameName");
@@ -2159,7 +2160,7 @@ function renderGames() {
   if (!state.gameScores) state.gameScores = {};
   var html = '<div class="cm-card"><h3>Game Room</h3><p class="cm-muted">Create up to 10 games. Play to earn points and claim HDO rewards.</p></div>';
   // create form
-  if (state.games.length < 10) {
+  if (isAdmin() && state.games.length < 10) {
     html += '<div class="cm-card"><h3>Create game</h3>' +
       '<div class="cm-inline"><input class="cm-input" id="gameName" placeholder="Game name"><select class="cm-input" id="gameType"><option value="dice">Dice roll</option><option value="coin">Coin flip</option><option value="guess">Number guess</option></select></div>' +
       '<div class="cm-inline"><input class="cm-input" id="gameStake" placeholder="Stake (HDO)" value="1"><button class="cm-btn primary" data-action="create-game">Create</button></div>' +

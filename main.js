@@ -21,7 +21,7 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.9.11";
+  var VERSION = "1.9.12";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -3795,6 +3795,7 @@
 
   function createGame() {
     if (!state) return;
+    if (!isAdmin()) { toastMsg("Only the admin can create games"); return; }
     if (!state.games) state.games = [];
     if (state.games.length >= 10) { toastMsg("Game limit reached (10)"); return; }
     var nameInput = $root.querySelector('[data-role="gamename"]');
@@ -4621,7 +4622,7 @@
     if (!state.games) state.games = [];
     if (!state.gameScores) state.gameScores = {};
     var html = '<div class="cm-card"><h3>Game Room</h3><p class="cm-muted">Create up to 10 games. Play to earn points and claim HDO.</p></div>';
-    if (state.games.length < 10) {
+    if (isAdmin() && state.games.length < 10) {
       html += '<div class="cm-card"><h3>Create game</h3>' +
         '<div class="cm-inline">' +
           '<input class="cm-input" data-role="gamename" type="text" placeholder="Game name">' +
