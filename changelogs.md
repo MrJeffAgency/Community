@@ -1,11 +1,15 @@
 # Changelog
 
+## 1.9.7
+- **The Community API is live.** `https://community-bot-api.hdo-box.workers.dev` is deployed on Cloudflare (Worker + D1) and is now the default in **Me → Community bots**, so every new bot is registered there and gets a real `cmb_…` token plus `getUpdates`/`sendMessage` endpoints. Clear and save the field to keep bots phone-only.
+- Plugin version and APK version are now in sync (`1.9.7`).
+
 ## 1.9.6
 - **Verified badge fixed.** The Grant/Remove buttons were wired to the wrong actions, so an admin tap did nothing. Grant, remove and relay-test now call the right handlers in the plugin and the APK.
 - **Admin mode.** If you reinstall and your ID changes, unlock admin tools with **Me → Admin** and the admin code. Unlocked admins publish grants as the developer ID, so every client accepts them.
 - **Bots can be DM'd.** New bots get a real `CM-XXXX-XXXX` ID, a contact row and a chat thread. Tap a bot in Chats, People or **Me → Community bots** to open it. Bots answer `/start`, `/help` and their configured commands.
 - **BotFather opens in the plugin.** The BotFather ID is now a valid Community ID, so tapping **Open BotFather** opens the chat instead of doing nothing.
-- **Community Bot API.** Added `api/` — a Cloudflare Worker + D1 Bot API with create/token/commands/sendMessage/getUpdates. Set the API URL in **Me → Community bots** to register bots.
+- **Community Bot API.** Added and deployed `api/` — a Cloudflare Worker + D1 Bot API with create/token/commands/sendMessage/getUpdates. It is live at `https://community-bot-api.hdo-box.workers.dev` and is the default in **Me → Community bots**, so BotFather registers new bots there automatically.
 - **Search.** Search chats and people from the Chats/People tabs, and search messages inside any chat.
 - **Followers/following.** Counts now show in profiles and in Me, and are shared with presence so they update for real people.
 - **Telegram-style chat.** New bubble shapes, wallpaper, timestamps, search field, round send button and bot rows in the plugin and the APK.

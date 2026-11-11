@@ -3,6 +3,16 @@
 A small Cloudflare Worker + D1 backend that lets Community bots run outside the
 phone — the same idea as the Telegram Bot API.
 
+**Live deployment:** `https://community-bot-api.hdo-box.workers.dev`
+(Cloudflare account `f5792b58f23f6504f452eebf6678871a`, D1 database
+`community-bot-api`, id `9c432159-ac70-4144-9f60-73ece5c842f9`).
+The plugin and the APK use this URL by default.
+
+```bash
+curl https://community-bot-api.hdo-box.workers.dev/health
+# {"ok":true,"service":"community-bot-api","version":"1.0.0"}
+```
+
 The plugin and the APK can create and DM bots on the phone without this API. Set
 **Me → Community bots → Community Bot API base URL** to turn on real bots that a
 script on a server can answer.
@@ -23,7 +33,7 @@ script on a server can answer.
 
 Auth is `Authorization: Bearer <bot token>` or `?token=<bot token>`.
 
-## Deploy
+## Deploy (re-deploy or a fresh account)
 
 ```bash
 cd api

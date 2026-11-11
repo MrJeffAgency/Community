@@ -14,7 +14,7 @@ Community Chat is a private, local-first chat plugin for Acode with preset rooms
 - **Followers & following**: Follow or unfollow someone from their profile. Counts show on profiles and in **Me**, and are shared with presence.
 - **Search**: Search chats and people from the Chats/People tabs, and search messages inside a chat.
 - **Community bots**: Open **Me → Community bots → BotFather** to create Telegram-style bots with a real Community ID, token, description and commands. Tap a bot to DM it; it answers `/start`, `/help` and its commands.
-- **Community Bot API**: The optional `api/` Worker + D1 service gives bots a real HTTP API (`sendMessage`, `getUpdates`, token rotation). Set its URL in **Me → Community bots** and BotFather registers new bots there.
+- **Community Bot API**: Live at `https://community-bot-api.hdo-box.workers.dev`. The Worker + D1 service in `api/` gives bots a real HTTP API (`sendMessage`, `getUpdates`, token rotation). It is the default in **Me → Community bots**, and BotFather registers new bots there automatically.
 - **End-to-end encryption**: Relay messages are encrypted on your device. Rooms use AES-256-GCM with a key derived from the room code; direct chats use ECDH P-256 key exchange plus AES-256-GCM.
 - **Presence**: See who is online in the current room.
 - **Notifications**: Get a notification when a new message arrives.

@@ -21,12 +21,13 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.9.6";
+  var VERSION = "1.9.7";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
   var DEFAULT_ROOM = "general";
   var DEFAULT_RELAY = "https://community-relay.hdo-box.workers.dev";
+  var DEFAULT_API = "https://community-bot-api.hdo-box.workers.dev";
   /* Older builds defaulted to ntfy.sh / ntfy.envs.net, which have a daily
      message quota. Stored copies of those defaults are migrated once to
      DEFAULT_RELAY; a relay the user types in later is kept as-is. */
@@ -1871,7 +1872,7 @@
         notify: settingsInput.notify !== false,
         hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : "",
         devMode: settingsInput.devMode === true,
-        apiBase: cleanRelay(settingsInput.apiBase)
+        apiBase: settingsInput.apiBase == null ? DEFAULT_API : cleanRelay(settingsInput.apiBase)
       },
       contacts: contacts,
       threads: threads,
@@ -3412,7 +3413,8 @@
   }
 
   function apiBase() {
-    return cleanRelay(state && state.settings && state.settings.apiBase);
+    var value = state && state.settings ? cleanRelay(state.settings.apiBase) : "";
+    return value;
   }
 
   function registerBotWithApi(bot) {
@@ -4629,12 +4631,12 @@
                 '<span class="cm-botrow-go">›</span></button>';
             }).join("") + "</div>"
           : '<p class="cm-muted">No bots yet.</p>') +
-        '<label class="cm-label" for="cm-api">Community Bot API base URL (optional)</label>' +
+        '<label class="cm-label" for="cm-api">Community Bot API base URL</label>' +
         '<div class="cm-inline">' +
-          '<input class="cm-input" id="cm-api" data-role="apiinput" type="text" value="' + escapeHTML(state.settings.apiBase || "") + '" placeholder="https://community-api.example.workers.dev" spellcheck="false">' +
+          '<input class="cm-input" id="cm-api" data-role="apiinput" type="text" value="' + escapeHTML(state.settings.apiBase || "") + '" placeholder="' + escapeHTML(DEFAULT_API) + '" spellcheck="false">' +
           '<button type="button" class="cm-btn" data-action="save-api">Save</button>' +
         "</div>" +
-        '<p class="cm-muted">BotFather registers bots with this API when it is set. Leave empty to keep bots on this phone.</p>' +
+        '<p class="cm-muted">Bots are registered with the Community API at <code>' + escapeHTML(DEFAULT_API) + "</code>. Clear the field and save to keep new bots on this phone only.</p>" +
       "</div>" +
 
       '<div class="cm-card">' +

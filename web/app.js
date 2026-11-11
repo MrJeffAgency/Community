@@ -1,10 +1,11 @@
 /* Community Chat — web app */
-const VERSION = "1.1.5";
+const VERSION = "1.1.6";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
 const DEFAULT_ROOM = "general";
 const DEFAULT_RELAY = "https://community-relay.hdo-box.workers.dev";
+const DEFAULT_API = "https://community-bot-api.hdo-box.workers.dev";
 const LEGACY_RELAYS = ["https://ntfy.sh", "https://ntfy.envs.net"];
 const TOPIC_PREFIX = "acode-community-v1-";
 const VERIFIED_TOPIC = TOPIC_PREFIX + "verified";
@@ -408,7 +409,7 @@ function normalizeState(data) {
       notify: settingsInput.notify !== false,
       hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : "",
       devMode: settingsInput.devMode === true,
-      apiBase: cleanRelay(settingsInput.apiBase)
+      apiBase: settingsInput.apiBase == null ? DEFAULT_API : cleanRelay(settingsInput.apiBase)
     },
     contacts: contacts,
     threads: threads,
@@ -1035,7 +1036,7 @@ function handleBotMessage(bot, text, thread) {
   saveState();
   render();
 }
-function apiBase() { return cleanRelay(state && state.settings && state.settings.apiBase); }
+function apiBase() { return state && state.settings ? cleanRelay(state.settings.apiBase) : ""; }
 function registerBotWithApi(bot) {
   var base = apiBase();
   if (!base || !bot) return Promise.resolve(null);
@@ -2109,7 +2110,7 @@ function renderMe() {
       return '<button class="cm-botrow" data-action="open-bot" data-id="' + escapeHTML(bot.id) + '"><span class="cm-avatar" style="width:34px;height:34px;font-size:17px">🤖</span><span class="cm-botrow-main"><b>@' + escapeHTML(bot.username) + '</b><small>' + escapeHTML(bot.name) + " · " + escapeHTML(bot.id) + '</small></span><span class="cm-botrow-go">›</span></button>';
     }).join("") + "</div>";
   }
-  html += '<label class="cm-label" for="apiInput">Community Bot API base URL (optional)</label><div class="cm-inline"><input class="cm-input" id="apiInput" value="' + escapeHTML(state.settings.apiBase || "") + '" placeholder="https://community-api.example.workers.dev"><button class="cm-btn primary" data-action="save-api">Save</button></div><p class="cm-muted">BotFather registers bots with this API when set.</p></div>';
+  html += '<label class="cm-label" for="apiInput">Community Bot API base URL</label><div class="cm-inline"><input class="cm-input" id="apiInput" value="' + escapeHTML(state.settings.apiBase || "") + '" placeholder="' + escapeHTML(DEFAULT_API) + '"><button class="cm-btn primary" data-action="save-api">Save</button></div><p class="cm-muted">Bots are registered with <code>' + escapeHTML(DEFAULT_API) + '</code>. Clear the field and save to keep new bots on this phone only.</p></div>';
   html += '<div class="cm-card"><h3>Admin</h3>' + (isAdmin()
     ? '<p class="cm-muted">Admin mode is ON' + (state.user.id === DEV_ID ? "" : " (unlocked)") + '. Grant verified badges in People.</p><div class="cm-btn-row"><button class="cm-btn danger" data-action="lock-dev">Turn off admin mode</button></div>'
     : '<p class="cm-muted">Enter the admin code to unlock verified-badge tools.</p><div class="cm-inline"><input class="cm-input" id="devCode" type="password" placeholder="Admin code"><button class="cm-btn primary" data-action="unlock-dev">Unlock</button></div>') + "</div>";
