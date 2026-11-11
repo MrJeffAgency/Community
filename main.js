@@ -2562,6 +2562,7 @@
           if (!chatId || !text) return;
           var thread = getThread(chatId, true);
           if (!thread) return;
+          if (!contactFor(chatId)) upsertContact(chatId, defaultName(chatId), "🙂", false);
           var mid = "api-" + raw.message_id;
           var exists = thread.messages.some(function (message) { return message.id === mid; });
           if (exists) return;

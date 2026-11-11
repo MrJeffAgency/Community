@@ -612,6 +612,7 @@ function pollBotOutbox() {
         var text = String(raw.text || "");
         if (!chatId || !text) return;
         var key = "dm:" + chatId;
+        if (!state.contacts[chatId]) state.contacts[chatId] = { id: chatId, name: defaultName(chatId), emoji: "🙂", publicKey: "", wallet: "", lastSeen: 0, followers: [], following: [] };
         if (!state.threads[key]) state.threads[key] = { peer: chatId, room: roomSlug(), messages: [], unread: 0, lastTs: 0 };
         var thread = state.threads[key];
         var mid = "api-" + raw.message_id;
@@ -2219,6 +2220,11 @@ function renderWallet() {
   "</div>";
 }
 function renderThread() {
+  var oldInput = document.getElementById("composer");
+  var draft = oldInput ? oldInput.value : "";
+  var oldMsgs = document.getElementById("msgs");
+  var wasBottom = !oldMsgs || (oldMsgs.scrollHeight - oldMsgs.scrollTop - oldMsgs.clientHeight < 120);
+  var oldScroll = oldMsgs ? oldMsgs.scrollTop : 0;
   var peer = ui.peer;
   var isCommunity = peer === "community";
   var slug = roomSlug();
@@ -2260,7 +2266,9 @@ function renderThread() {
   html += "</div>";
   $root.innerHTML = html;
   var msgsEl = document.getElementById("msgs");
-  if (msgsEl) msgsEl.scrollTop = msgsEl.scrollHeight;
+  if (msgsEl) msgsEl.scrollTop = wasBottom ? msgsEl.scrollHeight : oldScroll;
+  var restored = document.getElementById("composer");
+  if (restored && draft) restored.value = draft;
   bindActions();
   var comp = document.getElementById("composer");
   if (comp) comp.addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); } });
