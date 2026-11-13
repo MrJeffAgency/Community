@@ -1,5 +1,5 @@
 /* Community Chat — web app */
-const VERSION = "1.1.12";
+const VERSION = "1.1.13";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
@@ -1235,7 +1235,7 @@ function botFatherReply(text) {
   if (command === "/token") {
     var tokenBot = findBotByUsername(parts[1]);
     if (!tokenBot) return "Bot not found. Use /mybots.";
-    return "Token for @" + tokenBot.username + ":\n" + tokenBot.token + "\n\nRun it in a terminal with the Community Bot API.";
+    return "Token for @" + tokenBot.username + ":\n" + tokenBot.token + "\n\nThis bot runs on this phone. Use /setcommands to choose what it replies to.";
   }
   if (command === "/setcommands") {
     var cmdBot = findBotByUsername(parts[1]);

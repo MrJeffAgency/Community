@@ -6,8 +6,8 @@
   "tv": false,
   "name": "Community Chat",
   "id": "com.CommunityChat.myapp",
-  "versionName": "1.9.13",
-  "versionCode": 203,
+  "versionName": "1.9.14",
+  "versionCode": 204,
   "minSdk": 24,
   "targetSdk": 34
 }

@@ -1,6 +1,6 @@
 # Community Chat
 
-Community Chat is a private, local-first chat plugin for Acode with preset rooms, a built-in AI helper, direct chats, photo sharing, token transfers, room airdrops and a built-in Celo wallet.
+Community Chat is a private, local-first chat plugin for Acode with preset rooms, a built-in AI helper, direct chats, photo sharing, message translation, token transfers, room airdrops, admin-hosted games and a built-in Celo/BSC wallet.
 
 ## Features
 
@@ -13,15 +13,15 @@ Community Chat is a private, local-first chat plugin for Acode with preset rooms
 - **User profiles**: Tap a person's name or avatar in a room, or the chat header in a direct chat, to view their profile. Copy their Community ID or wallet address, save their wallet for token sends, or jump into a direct chat.
 - **Followers & following**: Follow or unfollow someone from their profile. Counts show on profiles and in **Me**, and are shared with presence.
 - **Search**: Search chats and people from the Chats/People tabs, and tap the 🔍 button in a chat header to search that conversation (tap again to hide the field).
-- **Chat wallpapers**: Pick Pattern, Sky, Mint, Sunset or Night in **Me → Chat wallpaper**.
-- **Community bots**: Open **Me → Community bots → BotFather** to create Telegram-style bots with a real Community ID, token, description and commands. Tap a bot to DM it; it answers `/start`, `/help` and its commands.
-- **Run your own bot**: The `community-bot/` folder has a Python SDK (`community`) and an example bot. Create a bot in BotFather, copy its `cmb_…` token into the bot's `.env`, run `python bot.py`, then use **Me → Community bots → Connect an existing bot** to chat with it inside Community Chat.
-- **Community Bot API**: Live at `https://community-bot-api.hdo-box.workers.dev`. The Worker + D1 service in `api/` gives bots a real HTTP API (`sendMessage`, `getUpdates`, token rotation). It is the default in **Me → Community bots**, and BotFather registers new bots there automatically.
+- **Message translation**: Tap the 🌐 button under a message in any room or direct chat to translate it. Pick the target language in **Me → Message translation**. Translations are cached on the phone and can be hidden again with the same button.
+- **Chat wallpapers**: Pick from ten backgrounds in **Me → Chat wallpaper**: Pattern, Sky, Mint, Sunset, Night, Paris, Lion, Community, Unicorn and Plug.
+- **Games tab**: The admin creates games with an HDO stake, and everyone can play them. Four types: dice roll, coin flip, number guess and quiz question. Games run for 24 hours, sync through the relay, and have a shared leaderboard. See **Games** below.
+- **Community bots**: Open **Me → Community bots → BotFather** to create Telegram-style bots with a Community ID, token, description and commands. Tap a bot to DM it; it answers `/start`, `/help` and the commands you set. Bots run on your phone with local replies and do not connect to any server.
 - **End-to-end encryption**: Relay messages are encrypted on your device. Rooms use AES-256-GCM with a key derived from the room code; direct chats use ECDH P-256 key exchange plus AES-256-GCM.
 - **Presence**: See who is online in the current room.
 - **Notifications**: Get a notification when a new message arrives.
-- **Celo wallet**: Every user (new and existing) gets a Celo wallet, created on the phone. The **Me** tab shows the address and live balances for **CELO**, **G$**, **USDT**, **USDC**, **HDO** and **BTC** (bridged WBTC), with copy, refresh and private-key backup.
-- **Token transfers**: Send tokens to any `0x` wallet address from the wallet, or tap the coin button in a room or direct chat to send and post an encrypted receipt card. Public preset rooms are HDO-only; private room codes and direct chats can send CELO, USDT, USDC, HDO and BTC. Token sending is unavailable in the AI Room.
+- **Celo/BSC wallet**: Every user (new and existing) gets a wallet, created on the phone. The **Me** tab shows the address and live balances for **CELO**, **G$**, **USDT**, **USDC**, **HDO** and **BTC** (bridged WBTC), plus BSC assets. Copy the address or back up the private key from the wallet card.
+- **Token transfers**: Send tokens to any `0x` wallet address from the wallet, or tap the coin button in a room or direct chat to send and post an encrypted receipt card. Public preset rooms are HDO-only; private room codes and direct chats can send the native coin plus the chat tokens.
 - **Room airdrops**: In a room or direct chat, choose **Airdrop** instead of a wallet address. The plugin funds a temporary claim wallet and posts an encrypted gift card; the first person to tap **Claim to my wallet** moves the tokens to their own address. Airdrops are unavailable in the AI Room.
 - **Verified badge**: Profile `CM-6S29-CA2X` is marked with a blue verified check. Admins grant or remove the badge in **People → Verified badge**. If the developer reinstalls and gets a new ID, unlock admin mode from **Me → Admin** with the admin code.
 - **Encrypted backup**: Export your chats, contacts and wallet key protected by a passphrase (PBKDF2 + AES-256-GCM).
@@ -32,11 +32,11 @@ Community Chat is a private, local-first chat plugin for Acode with preset rooms
 Community Chat is designed for a phone in Acode, not a desktop page squeezed onto a small screen.
 
 - **Top bar:** the current room is a single button. Tap it to open the **Rooms** sheet, choose a preset room or enter a private room code.
-- **Bottom tabs:** **Chats**, **People** and **Me**. The active tab is highlighted and every tab has a full-height touch target.
+- **Bottom tabs:** **Chats**, **People**, **Games** and **Me**. The active tab is highlighted and every tab has a full-height touch target.
 - **Chats:** the current room and direct chats are cards with a 64 px touch row. Room chips scroll horizontally.
-- **Inside a chat:** the back arrow returns to the chat list. The **⋯** button opens **Room options** for a community room or **Chat options** for a direct chat.
+- **Inside a chat:** the back arrow returns to the chat list. The 🔍 button toggles the in-chat search field. The **⋯** button opens **Room options** for a community room or **Chat options** for a direct chat.
 - **Composer:** photo and token buttons sit on the left, the message field grows as you type, and the send button is on the right. Photo and token buttons are hidden in the AI Room, where they do not apply.
-- **Me:** profile, ID, rooms, notifications and wallet are separate cards. Backup, privacy and advanced relay settings are collapsed so the page stays short.
+- **Me:** profile, ID, rooms, translation, wallpapers, notifications and wallet are separate cards. Backup, privacy and advanced relay settings are collapsed so the page stays short.
 - **Dialogs:** on a phone, dialogs open as bottom sheets with full-width actions.
 
 ## Install from GitHub (Remote)
@@ -68,14 +68,35 @@ Tap a room chip in the **Chats** tab, or tap the room name in the top bar to ope
 4. Tap the photo button in the composer to send an image, or the coin button to send tokens — or create an airdrop — in a room or direct chat (not in the AI Room).
 5. In the **AI Room**, type a question and Lucky AI will reply.
 
+## Games
+
+The **Games** tab is a small game room shared by everyone using Community Chat. It is separate from the 🎮 Game Room chat.
+
+- **Only the admin creates games.** The admin is profile `CM-6S29-CA2X`, or any device that unlocked admin mode with the code `COMMUNITY-ADMIN` in **Me → Admin**. Everyone else sees the game list and a **Play** button.
+- **Up to 10 games** can exist at once. The admin enters a name, picks a type (dice roll, coin flip, number guess or quiz question) and sets a stake in HDO.
+- **The admin stakes HDO into a prize pool.** The pool starts at the stake amount. The stake and pool are game state inside the app, not tokens locked in a smart contract.
+- **Anyone can play.** Each play can win points (stake × 10) and reduces the remaining pool by the stake. A win sets the last winner; when the pool reaches 0 the game is marked **Prize pool finished**.
+- **Games last 24 hours.** After 24 hours a game is marked **Returned to admin**, and whatever HDO is left in the pool is shown as returned to the admin.
+- **Games sync through the relay.** Create, update and delete events are accepted only from the admin profile. Play results come from the player who played. Everyone on 1.9.13 or newer sees the same games, pool, plays and winner, even after restarting the app.
+- **HDO payout is manual.** The app tracks the pool and points, but it does not move HDO on-chain automatically. **Claim HDO reward** shows your points and reminds you that the admin pays winners from the stake pool using the **Wallet** tab.
+- **Only the admin can delete games**, and deleting a game removes it for everyone.
+
+## Message translation
+
+- Tap the 🌐 button under any text message in a room or direct chat.
+- The translation appears under the original message. Tap 🌐 again to hide it.
+- Choose the language in **Me → Message translation**: English, French, Spanish, Portuguese, Arabic, Swahili, Hindi, Chinese, Russian or German.
+- The phone sends only the message text to a translation service: MyMemory first (`api.mymemory.translated.net`), with Google Translate (`translate.googleapis.com`) as a fallback. Token receipts, airdrops and photos are never translated.
+- Translations are cached on the phone, so showing the same message again does not need another request.
+
 ## Wallet
 
 - A wallet is created automatically the first time you open v1.3.0 or newer (existing users included). The private key never leaves your phone.
-- Balances are read from public Celo and Thunder RPC endpoints using only your address. Celo and Thunder are the supported networks.
-- Supported assets are **CELO** (native), **G$**, **USDT**, **USDC**, **HDO** and **BTC** (bridged WBTC on Celo).
+- Balances are read from public Celo and BSC RPC endpoints using only your address. Celo and BSC are the supported networks.
+- Supported assets on **Celo** are **CELO** (native), **G$**, **USDT**, **USDC**, **HDO** and **BTC** (bridged WBTC). **BSC** supports **BNB** (native), **USDT**, **USDC**, **BTC** and **ETH**.
 - G$ uses the official GoodDollar contract on Celo: `0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A` (18 decimals).
-- USDT uses `0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e` and USDC uses `0xcebA9300f2b948710d2653dD7B07f33A8B32118C` (both 6 decimals).
-- BTC uses the Celo bridged WBTC contract `0x8aC2901Dd8A1F17a1A4768A6bA4C3751e3995B2D` (8 decimals).
+- Celo USDT uses `0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e` and Celo USDC uses `0xcebA9300f2b948710d2653dD7B07f33A8B32118C` (both 6 decimals).
+- BTC on Celo uses the bridged WBTC contract `0x8aC2901Dd8A1F17a1A4768A6bA4C3751e3995B2D` (8 decimals).
 - HDO uses `0x0b7e844Dd950558295eB5Ee7d5f57d18c1BEeb02` on Celo by default; it can be overridden in **Token settings**.
 - Already have a wallet? Tap **Import wallet** in the wallet card and paste its private key. The address and balances switch to that wallet, and your previous wallet's key stays under **Back up key**.
 - Resetting your chat identity does **not** delete the wallet. Importing a backup with a different wallet keeps your current one in the key backup list.
@@ -83,9 +104,9 @@ Tap a room chip in the **Chats** tab, or tap the room name in the top bar to ope
 ## Sending tokens
 
 - Tap **Send tokens** in the wallet, or the coin button inside a room or direct chat.
-- Choose a token, paste the recipient's `0x` wallet address, enter an amount and confirm. The transaction is signed on the phone and broadcast directly to Celo.
-- In **public preset rooms** (General, Game Room, Dev Room, Help Room) only **HDO** can be sent. In **private room codes** and **direct chats** you can send **CELO, USDT, USDC, HDO or BTC**. The wallet tab can send every supported wallet asset, including G$.
-- You need a small amount of **CELO** to pay the network fee. The plugin checks the fee and your token balance before signing.
+- Choose the network, token and amount, paste the recipient's `0x` wallet address and confirm. The transaction is signed on the phone and broadcast directly to the chosen chain.
+- In **public preset rooms** (General, Game Room, Dev Room, Help Room) only **HDO** can be sent. In **private room codes** and **direct chats** you can send the native coin plus **USDT, USDC, HDO and BTC**. The wallet tab can send every supported wallet asset.
+- You need a small amount of the native coin (**CELO** on Celo, **BNB** on BSC) to pay the network fee. The plugin checks the fee and your token balance before signing.
 - When you send from a chat, an encrypted receipt card with the amount, recipient and a block-explorer link is posted to that room or direct chat. In a direct chat you can save your friend's wallet address in **Chat options** so it is filled in automatically.
 - Token sending is disabled in the **AI Room** because that room is a private conversation with Lucky AI, not with other users.
 - On-chain transfers are public and irreversible, even though the chat receipt is end-to-end encrypted. Double-check the address before confirming. Lose your key and the funds are gone.
@@ -98,7 +119,7 @@ Tap a room chip in the **Chats** tab, or tap the room name in the top bar to ope
 - The first person to tap **Claim to my wallet** signs a transfer from the temporary wallet to their own address. Later claims fail because the pot is empty. The claim transaction link is shown on the card.
 - Airdrop claim keys are inside the encrypted message payload only. They are never shown on the card or sent to the relay in plaintext. The sender can also open the fallback dialog to copy the claim key if posting the card fails.
 - Airdrops are unavailable in the **AI Room**.
-- Preset rooms use public room codes: anyone who knows the code can join and claim an airdrop posted there. Airdrops in preset public rooms are **HDO only**. Use a private room code for a private drop with CELO, USDT, USDC, HDO or BTC.
+- Preset rooms use public room codes: anyone who knows the code can join and claim an airdrop posted there. Airdrops in preset public rooms are **HDO only**. Use a private room code for a private drop with the native coin, USDT, USDC, HDO or BTC.
 
 ## Relay (optional, no daily limit)
 
@@ -121,12 +142,12 @@ The relay stores only encrypted envelopes and keeps the newest 1,000 messages pe
 
 The same chat is also available as a standalone Android app, built from the `web/` folder with the Acode Android Builder.
 
-- `web/app.js` contains the chat, encryption, wallet, airdrop and relay logic.
+- `web/app.js` contains the chat, encryption, games, translation, wallet, airdrop and relay logic.
 - `web/index.html` loads `ethers.js` and `app.js`; `web/style.css` is the mobile UI.
 - `web/icon.png` is the plugin icon, used as the app icon, the header logo and the favicon.
 - `web/androidbuilder.json` holds the APK name, package id, version and icon URL.
 
-Build it with the Acode **Android Builder** plugin (`action: build` on the `web/` directory), or install a released APK from the repository's Downloads. The APK uses the same relay, room codes, IDs and encryption as the Acode plugin, so plugin and APK users can chat with each other.
+Build it with the Acode **Android Builder** plugin (`action: build` on the `web/` directory), or install a released APK from the repository's Downloads. The APK uses the same relay, room codes, IDs, games and encryption as the Acode plugin, so plugin and APK users can chat and play together.
 
 ## Privacy
 
@@ -139,6 +160,8 @@ Build it with the Acode **Android Builder** plugin (`action: build` on the `web/
 - Encryption requires the device WebView to support WebCrypto. If it does not, sending is blocked instead of falling back to plaintext.
 - Preset rooms use public codes, so **Room options** labels them as public. Create your own room code for private groups.
 - AI Room replies are stored on the device and not relayed to other users, but the text you type in the AI Room is sent to the Lucky AI server (`luckyai-blush.vercel.app`) to get an answer.
+- Message translation sends only the message text to MyMemory (`api.mymemory.translated.net`) or Google Translate (`translate.googleapis.com`). No name, ID or wallet address is included.
+- Game data is shared through the relay in plaintext (game name, type, stake, pool, player IDs, winner). Do not put private information in a game name.
 - Token receipts posted in chats are end-to-end encrypted like other messages. The blockchain transaction itself is public: the sender, recipient, amount and token are visible on the relevant chain's explorer.
 - Airdrop claim keys travel inside the encrypted message payload. Whoever can decrypt the chat can claim the airdrop. Treat a public-room airdrop as a public giveaway.
 
@@ -147,17 +170,19 @@ Build it with the Acode **Android Builder** plugin (`action: build` on the `web/
 This section is for users and store reviewers who want to verify what the plugin does.
 
 - **No accounts, no analytics, no ads, no tracking.** The plugin does not collect usage data, device identifiers or contact lists.
-- **Everything is stored on the device** in `localStorage` under the key `acode.community.chat.v1`: chats, contacts, settings, the chat identity key and the wallet key.
+- **Everything is stored on the device** in `localStorage` under the key `acode.community.chat.v1`: chats, contacts, settings, games, the chat identity key and the wallet key.
 - **No remote code and no `eval`.** The plugin ships as plain JavaScript in `main.js`. It does not download or execute scripts. The only file it loads dynamically is the local `style.css` that comes in the same package.
 - **Network endpoints used:**
-  - `https://community-relay.hdo-box.workers.dev` (default) — receives encrypted message envelopes, presence pings and public-key announcements. Message text, images, token receipts and airdrop claim keys are encrypted on the device before upload. This relay has no daily message quota.
+  - `https://community-relay.hdo-box.workers.dev` (default) — receives encrypted message envelopes, presence pings, public-key announcements and game events. Message text, images, token receipts and airdrop claim keys are encrypted on the device before upload. This relay has no daily message quota.
   - `https://ntfy.envs.net` / `https://ntfy.sh` — older default relays with a daily quota. Builds before 1.6.1 used these; the plugin migrates that default once.
   - `relay/` in this repository is the same relay, self-hostable on Cloudflare (see `relay/README.md`). A relay stores encrypted envelopes plus routing metadata (Community ID, display name, emoji, public key, timestamp).
   - `https://luckyai-blush.vercel.app/api/chat` — receives only the text you type in the **AI Room** to generate a reply. Nothing else is sent there.
-  - `https://forno.celo.org` and `https://celo-rpc.publicnode.com` — public Celo RPC endpoints used to read balances and broadcast transactions you approve.
-  - `https://celoscan.io` — only opened when you tap a transaction link.
-- **Wallet safety:** the private key is generated on the phone with `crypto.getRandomValues`. It is never sent to the relay, to friends, to Lucky AI or to any server. Transfers are signed locally; only the signed transaction is broadcast to Celo. Losing the phone without a backup means losing the funds.
+  - `https://api.mymemory.translated.net/get` and `https://translate.googleapis.com` — receive only the message text you tap 🌐 on, plus the target language.
+  - `https://forno.celo.org`, `https://celo-rpc.publicnode.com`, `https://bsc-dataseed.binance.org` and the other BSC data seeds — public RPC endpoints used to read balances and broadcast transactions you approve.
+  - `https://celoscan.io` and `https://bscscan.com` — only opened when you tap a transaction link.
+- **Wallet safety:** the private key is generated on the phone with `crypto.getRandomValues`. It is never sent to the relay, to friends, to Lucky AI or to any server. Transfers are signed locally; only the signed transaction is broadcast to the chosen chain. Losing the phone without a backup means losing the funds.
 - **Encryption:** rooms use AES-256-GCM with a PBKDF2 key from the room code. Direct chats use ECDH P-256 plus AES-256-GCM. If WebCrypto is unavailable, sending is blocked rather than falling back to plaintext.
+- **Games:** game records are published to a separate relay topic so every player sees the same list. Game create, update and delete events are accepted only from the admin profile; play results are accepted from the player.
 - **Airdrops:** the temporary claim key is stored only inside the encrypted message payload. It is never posted in plaintext, and the on-chain funding transaction is public.
 - **Backups:** exported backups are encrypted with PBKDF2 + AES-256-GCM. A plain backup option exists and is clearly marked unsafe.
 - **Source:** the complete source is published at [MrJeffAgency/Community](https://github.com/MrJeffAgency/Community/tree/main), and the installable zip can be rebuilt from that source.

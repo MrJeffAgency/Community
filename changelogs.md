@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.14
+- Rewrote the plugin README so it matches the app: removed the old Community Bot API and "connect an existing bot" instructions, fixed the tabs and wallet networks, and documented games and message translation.
+- BotFather no longer tells you to run a token in a terminal. Bots are local to the phone and reply with the commands you set.
+
 ## 1.9.13
 - Games created by the admin are now shared with everyone in the room and survive app restarts (synced through the relay).
 - Game results sync too: plays, prize pool, winner and 24-hour expiry are visible to all players.
