@@ -1,5 +1,5 @@
 /* Community Chat — web app */
-const VERSION = "1.1.11";
+const VERSION = "1.1.12";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
@@ -8,6 +8,20 @@ const DEFAULT_RELAY = "https://community-relay.hdo-box.workers.dev";
 const LEGACY_RELAYS = ["https://ntfy.sh", "https://ntfy.envs.net"];
 const TOPIC_PREFIX = "acode-community-v1-";
 const VERIFIED_TOPIC = TOPIC_PREFIX + "verified";
+const GAMES_TOPIC = TOPIC_PREFIX + "games";
+const GAME_LIFETIME_MS = 24 * 60 * 60 * 1000;
+const TRANSLATE_LANGS = [
+  { code: "en", name: "English" },
+  { code: "fr", name: "French" },
+  { code: "es", name: "Spanish" },
+  { code: "pt", name: "Portuguese" },
+  { code: "ar", name: "Arabic" },
+  { code: "sw", name: "Swahili" },
+  { code: "hi", name: "Hindi" },
+  { code: "zh-CN", name: "Chinese" },
+  { code: "ru", name: "Russian" },
+  { code: "de", name: "German" }
+];
 const AI_ENDPOINT = "https://luckyai-blush.vercel.app/api/chat?message=";
 const AI_ID = "CM-AI00-0000";
 const AI_NAME = "Lucky AI";
@@ -304,6 +318,125 @@ function sanitizeAirdrop(value) {
     claimsUsed: usedClaims
   };
 }
+function cleanGameRecord(value) {
+  if (!value || typeof value !== "object") return null;
+  var name = String(value.name || "").replace(/[\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
+  if (!name) return null;
+  var type = ["dice", "coin", "guess", "quiz"].indexOf(value.type) === -1 ? "dice" : value.type;
+  var stake = String(value.stake == null ? "1" : value.stake).replace(/[^0-9.]/g, "").slice(0, 20) || "1";
+  var created = Number(value.createdAt) || Date.now();
+  var expires = Number(value.expiresAt) || (created + GAME_LIFETIME_MS);
+  var status = ["open", "finished", "returned"].indexOf(value.status) === -1 ? "open" : value.status;
+  var players = Array.isArray(value.players) ? value.players.map(normalizeId).filter(Boolean).slice(0, 100) : [];
+  var prizePool = Number(value.prizePool);
+  if (!isFinite(prizePool) || prizePool < 0) prizePool = Math.max(0, parseFloat(stake) || 0);
+  return {
+    id: String(value.id || uid()).slice(0, 80),
+    name: name,
+    type: type,
+    stake: stake,
+    creator: normalizeId(value.creator) || "",
+    createdAt: created,
+    expiresAt: expires,
+    plays: Math.max(0, Number(value.plays) || 0),
+    prizePool: Math.round(prizePool * 1000) / 1000,
+    paid: Math.max(0, Number(value.paid) || 0),
+    players: players,
+    lastWinner: normalizeId(value.lastWinner) || "",
+    status: status
+  };
+}
+function translateLangCode(value) {
+  var code = String(value || "").trim();
+  for (var i = 0; i < TRANSLATE_LANGS.length; i += 1) if (TRANSLATE_LANGS[i].code === code) return code;
+  return "en";
+}
+function translateLangName(code) {
+  var target = translateLangCode(code);
+  for (var i = 0; i < TRANSLATE_LANGS.length; i += 1) if (TRANSLATE_LANGS[i].code === target) return TRANSLATE_LANGS[i].name;
+  return "English";
+}
+function translateTarget() { return translateLangCode(state && state.settings ? state.settings.translateTo : "en"); }
+function detectLanguageCode(value) {
+  var text = String(value || "");
+  if (/[\u0600-\u06FF]/.test(text)) return "ar";
+  if (/[\u0400-\u04FF]/.test(text)) return "ru";
+  if (/[\u4E00-\u9FFF]/.test(text)) return "zh-CN";
+  if (/[\u0900-\u097F]/.test(text)) return "hi";
+  return "en";
+}
+function decodeTranslation(value) {
+  return String(value || "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+}
+function translateWithGoogle(value, lang) {
+  var url = "https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=auto&tl=" + encodeURIComponent(lang) + "&q=" + encodeURIComponent(value);
+  return fetchWithTimeout(url, { cache: "no-store" }, 20000).then(function (r) {
+    if (!r.ok) throw new Error("Translate HTTP " + r.status);
+    return r.json();
+  }).then(function (data) {
+    var parts = data && Array.isArray(data[0]) ? data[0] : [];
+    var out = "";
+    for (var i = 0; i < parts.length; i += 1) if (parts[i] && typeof parts[i][0] === "string") out += parts[i][0];
+    out = out.trim();
+    if (!out) throw new Error("No translation returned");
+    return { text: out, source: String(data[2] || "") };
+  });
+}
+function translateText(text, target) {
+  var lang = translateLangCode(target);
+  var value = String(text || "").slice(0, MAX_TEXT);
+  if (!value.trim()) return Promise.reject(new Error("There is no text to translate"));
+  var source = detectLanguageCode(value);
+  if (source === lang) return Promise.resolve({ text: value, source: source });
+  var url = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(value) + "&langpair=" + encodeURIComponent(source + "|" + lang);
+  return fetchWithTimeout(url, { cache: "no-store" }, 20000).then(function (r) {
+    if (!r.ok) throw new Error("Translate HTTP " + r.status);
+    return r.json();
+  }).then(function (data) {
+    if (data && data.quotaFinished) throw new Error("Translation limit reached");
+    var out = data && data.responseData ? decodeTranslation(data.responseData.translatedText) : "";
+    out = out.trim();
+    if (!out) throw new Error("No translation returned");
+    return { text: out, source: source };
+  }).catch(function () {
+    return translateWithGoogle(value, lang);
+  });
+}
+function translateMessage(id) {
+  var message = findMessage(id);
+  if (!message || !message.text || message.token || message.airdrop) return;
+  var target = translateTarget();
+  if (message.tr && message.trLang === target) {
+    message.showTr = !message.showTr;
+    saveState();
+    render();
+    return;
+  }
+  if (message.translating) return;
+  message.translating = true;
+  render();
+  translateText(message.text, target).then(function (result) {
+    message.tr = result.text;
+    message.trLang = target;
+    message.trSrc = result.source;
+    message.showTr = true;
+    message.translating = false;
+    saveState();
+    render();
+  }).catch(function (error) {
+    message.translating = false;
+    render();
+    toast("Could not translate: " + (error && error.message ? error.message : String(error)), 5000);
+  });
+}
+function saveTranslateLang() {
+  if (!state) return;
+  var select = document.getElementById("translateLang");
+  if (!state.settings) state.settings = {};
+  state.settings.translateTo = translateLangCode(select ? select.value : "en");
+  saveState();
+  toast("Translation language set to " + translateLangName(state.settings.translateTo));
+}
 function normalizeState(data) {
   var input = data && typeof data === "object" ? data : {};
   var userId = normalizeId(input.user && input.user.id) || makeUserId();
@@ -397,6 +530,11 @@ function normalizeState(data) {
     if (g && g.name) games.push(g);
   });
   var gameScores = (input.gameScores && typeof input.gameScores === "object") ? input.gameScores : {};
+  var gameCursor = null;
+  var gameCursorInput = input.gameCursor && typeof input.gameCursor === "object" ? input.gameCursor : null;
+  if (gameCursorInput && (gameCursorInput.id || gameCursorInput.ts)) {
+    gameCursor = { id: typeof gameCursorInput.id === "string" ? gameCursorInput.id.slice(0, 80) : "", ts: Number(gameCursorInput.ts) || 0 };
+  }
   var bots = [];
   var botsInput = Array.isArray(input.bots) ? input.bots : [];
   botsInput.slice(0, 50).forEach(function (value) {
@@ -416,7 +554,7 @@ function normalizeState(data) {
       hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : "",
       devMode: settingsInput.devMode === true,
       chatWallpaper: ["pattern", "sky", "mint", "sunset", "night", "paris", "lion", "community", "unicorn", "plug"].indexOf(settingsInput.chatWallpaper) === -1 ? "pattern" : settingsInput.chatWallpaper,
-      apiBase: ""
+      translateTo: translateLangCode(settingsInput.translateTo)
     },
     contacts: contacts,
     threads: threads,
@@ -432,6 +570,7 @@ function normalizeState(data) {
     bots: bots,
     games: games,
     gameScores: gameScores,
+    gameCursor: gameCursor,
     welcome: input.welcome !== false
   };
 }
@@ -570,6 +709,37 @@ function pollTopic(url, guard, onCursor) {
     if (nextCursor && (!guard || guard())) onCursor(nextCursor);
   });
 }
+function pollGames() {
+  if (!running || !state) return Promise.resolve();
+  var base = relayBase();
+  var cursor = state.gameCursor || null;
+  var url = base + "/" + encodeURIComponent(GAMES_TOPIC) + "/json?poll=1&limit=300&since=" + encodeURIComponent(sinceValue(cursor));
+  return fetchWithTimeout(url, { cache: "no-store" }, 15000).then(function (r) {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.text();
+  }).then(function (text) {
+    if (!running || !state) return;
+    var nextCursor = null;
+    var changed = false;
+    var lines = String(text || "").split("\n");
+    for (var i = 0; i < lines.length; i += 1) {
+      var line = lines[i].trim();
+      if (!line) continue;
+      var item;
+      try { item = JSON.parse(line); } catch (e) { continue; }
+      if (!item || item.event !== "message") continue;
+      if (item.id) nextCursor = { id: String(item.id).slice(0, 80), ts: Number(item.time) || Math.floor(Date.now() / 1000) };
+      var env = parseEnvelopeText(item.message);
+      if (!env || env.app !== APP_TAG || Number(env.v) !== ENVELOPE_VERSION) continue;
+      if (env.type !== "game") continue;
+      if (normalizeId(env.from) === state.user.id) continue;
+      if (applyRemoteGame(env, true)) changed = true;
+    }
+    if (nextCursor) state.gameCursor = nextCursor;
+    if (nextCursor || changed) saveState();
+    if (changed) refreshGameUI();
+  }).catch(function () {});
+}
 function pollNow() {
   if (!running || !state || pollInFlight) return;
   pollInFlight = true;
@@ -589,7 +759,8 @@ function pollNow() {
     saveState();
   }).catch(function () {});
   var verifiedPoll = pollVerified();
-  Promise.all([roomPoll, dmPoll, verifiedPoll]).then(function () {
+  var gamePoll = pollGames();
+  Promise.all([roomPoll, dmPoll, verifiedPoll, gamePoll]).then(function () {
     if (running) { ui.status = "online"; ui.lastSync = Date.now(); renderStatus(); }
   }).catch(function () {}).then(function () {
     pollInFlight = false;
@@ -739,6 +910,7 @@ function handleEnvelope(env) {
     saveState(); render(); return;
   }
   if (isKey) { if (env.pk) rememberPublicKey(from, env.pk); saveState(); return; }
+  if (env.type === "game") { applyRemoteGame(env, false); return; }
   if (isAiRoom() && to === "all") return;
   if (env.enc === ENC_VERSION) {
     decryptWireEnvelope(env).then(function (payload) {
@@ -1980,6 +2152,13 @@ function toggleThreadSearch() {
   var input = document.getElementById("searchInput");
   if (input) input.focus();
 }
+function gameById(id) {
+  if (!state || !state.games) return null;
+  for (var i = 0; i < state.games.length; i += 1) {
+    if (state.games[i] && state.games[i].id === id) return state.games[i];
+  }
+  return null;
+}
 function createGame() {
   if (!state) return;
   if (!isAdmin()) { toast("Only the admin can create games"); return; }
@@ -1988,56 +2167,178 @@ function createGame() {
   var nameInput = document.getElementById("gameName");
   var typeInput = document.getElementById("gameType");
   var stakeInput = document.getElementById("gameStake");
-  var name = String(nameInput && nameInput.value || "").trim();
+  var name = String(nameInput && nameInput.value || "").replace(/\s+/g, " ").trim();
   if (!name) { toast("Enter a game name"); return; }
   var type = typeInput ? typeInput.value : "dice";
-  var stake = String(stakeInput && stakeInput.value || "1").trim() || "1";
-  state.games.push({ id: uid(), name: name, type: type, stake: stake, creator: state.user.id, createdAt: Date.now(), plays: 0, status: "open", prize: stake, expiresAt: Date.now() + (24 * 60 * 60 * 1000) });
+  var stake = String(stakeInput && stakeInput.value || "1").replace(/[^0-9.]/g, "").trim() || "1";
+  var game = cleanGameRecord({
+    id: uid(),
+    name: name.slice(0, 40),
+    type: type,
+    stake: stake,
+    creator: state.user.id,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + GAME_LIFETIME_MS,
+    plays: 0,
+    prizePool: Math.max(0, parseFloat(stake) || 0),
+    paid: 0,
+    players: [],
+    status: "open"
+  });
+  if (!game) { toast("Enter a game name"); return; }
+  state.games.push(game);
   saveState();
+  publishGameEvent("create", game);
   toast("Game created");
   render();
 }
 function expireGames() {
-  if (!state || !state.games) return;
+  if (!state || !state.games) return false;
   var nowMs = Date.now();
+  var changed = false;
   state.games.forEach(function (g) {
     if (!g || g.status !== "open") return;
-    if (g.expiresAt && nowMs > (Number(g.expiresAt) || 0)) { g.status = "returned"; }
+    if (g.expiresAt && nowMs > (Number(g.expiresAt) || 0)) { g.status = "returned"; changed = true; }
   });
+  if (changed) saveState();
+  return changed;
+}
+function refreshGameUI() {
+  if (ui.mode === "tabs" && ui.tab === "games") render();
+}
+function applyRemoteGame(env, silent) {
+  if (!state || !env) return false;
+  var action = String(env.action || "create");
+  var fromAdmin = normalizeId(env.from) === DEV_ID;
+  if (!state.games) state.games = [];
+
+  if (action === "delete") {
+    var deleteId = String(env.gameId || (env.game && env.game.id) || "").slice(0, 80);
+    if (!deleteId) return false;
+    var before = state.games.length;
+    state.games = state.games.filter(function (g) { return g.id !== deleteId; });
+    if (state.games.length === before) return false;
+    if (!silent) { saveState(); refreshGameUI(); }
+    return true;
+  }
+
+  if (action === "play") {
+    var playId = String(env.gameId || "").slice(0, 80);
+    var player = normalizeId(env.player);
+    if (!playId || !player) return false;
+    var game = gameById(playId);
+    if (!game || game.status !== "open") return false;
+    game.plays = Math.max(0, Number(game.plays) || 0) + 1;
+    if (!Array.isArray(game.players)) game.players = [];
+    if (game.players.indexOf(player) === -1 && game.players.length < 100) game.players.push(player);
+    if (env.win) {
+      var stakeNum = Math.max(0, parseFloat(game.stake) || 0);
+      game.prizePool = Math.max(0, (Number(game.prizePool) || 0) - stakeNum);
+      game.paid = Math.max(0, Number(game.paid) || 0) + stakeNum;
+      game.lastWinner = player;
+      if (game.prizePool <= 0) game.status = "finished";
+    }
+    if (!silent) { saveState(); refreshGameUI(); }
+    return true;
+  }
+
+  if (!fromAdmin) return false;
+  var record = cleanGameRecord(env.game);
+  if (!record) return false;
+  var index = -1;
+  for (var i = 0; i < state.games.length; i += 1) {
+    if (state.games[i] && state.games[i].id === record.id) { index = i; break; }
+  }
+  if (index === -1) {
+    if (state.games.length >= 10) return false;
+    record.remote = true;
+    state.games.push(record);
+  } else {
+    var current = state.games[index];
+    record.plays = Math.max(Number(current.plays) || 0, record.plays);
+    record.paid = Math.max(Number(current.paid) || 0, record.paid);
+    if (isFinite(Number(current.prizePool))) record.prizePool = Math.min(Number(current.prizePool), record.prizePool);
+    if (Array.isArray(current.players) && current.players.length) record.players = current.players;
+    record.lastWinner = current.lastWinner || record.lastWinner;
+    if (current.status === "finished" || current.status === "returned") record.status = current.status;
+    record.remote = !!(current.remote || fromAdmin);
+    state.games[index] = record;
+  }
+  if (!silent) { saveState(); refreshGameUI(); }
+  return true;
+}
+function publishGameEvent(action, game, extra) {
+  if (!state) return Promise.resolve(false);
+  var env = {
+    app: APP_TAG,
+    v: ENVELOPE_VERSION,
+    id: uid(),
+    from: state.settings && state.settings.devMode ? DEV_ID : state.user.id,
+    name: state.user.name,
+    type: "game",
+    action: String(action || "create"),
+    ts: Date.now()
+  };
+  if (game) env.game = game;
+  if (extra) {
+    if (extra.gameId) env.gameId = extra.gameId;
+    if (extra.player) env.player = extra.player;
+    if (extra.win != null) env.win = !!extra.win;
+    if (extra.points != null) env.points = Number(extra.points) || 0;
+  }
+  return publish(env, GAMES_TOPIC).then(function () { return true; }).catch(function () { return false; });
 }
 function deleteGame(id) {
   if (!state || !state.games) return;
+  if (!isAdmin()) { toast("Only the admin can delete games"); return; }
+  if (!gameById(id)) return;
   state.games = state.games.filter(function (g) { return g.id !== id; });
   saveState();
+  publishGameEvent("delete", { id: id });
   render();
 }
 function playGame(id) {
   if (!state || !state.games) return;
-  var game = state.games.filter(function (g) { return g.id === id; })[0];
+  var game = gameById(id);
   if (!game) return;
-  game.plays = (game.plays || 0) + 1;
+  if (game.status !== "open") { toast("This game is closed"); return; }
+  if (game.expiresAt && Date.now() > (Number(game.expiresAt) || 0)) {
+    expireGames();
+    render();
+    toast("This game expired. The remaining HDO went back to the admin.");
+    return;
+  }
+  game.plays = Math.max(0, Number(game.plays) || 0) + 1;
   var win = false;
   if (game.type === "dice") win = Math.floor(Math.random() * 6) + 1 >= 4;
   else if (game.type === "coin") win = Math.random() < 0.5;
   else if (game.type === "guess") win = Math.random() < 0.35;
+  else if (game.type === "quiz") win = Math.random() < 0.5;
   if (!state.gameScores) state.gameScores = {};
+  if (!Array.isArray(game.players)) game.players = [];
+  if (game.players.indexOf(state.user.id) === -1 && game.players.length < 100) game.players.push(state.user.id);
+  var pts = 0;
   if (win) {
-    var pts = Math.max(1, Math.round(parseFloat(game.stake) || 1) * 10);
+    pts = Math.max(1, Math.round((parseFloat(game.stake) || 1) * 10));
     state.gameScores[state.user.id] = (state.gameScores[state.user.id] || 0) + pts;
-    toast("You won " + pts + " points!");
+    var stakeNum = Math.max(0, parseFloat(game.stake) || 0);
+    game.prizePool = Math.max(0, (Number(game.prizePool) || 0) - stakeNum);
+    game.paid = Math.max(0, Number(game.paid) || 0) + stakeNum;
+    game.lastWinner = state.user.id;
+    if (game.prizePool <= 0) game.status = "finished";
+    toast("You won " + pts + " points!" + (game.status === "finished" ? " The prize pool is finished." : ""));
   } else {
     toast("You lost. Try again!");
   }
   saveState();
+  publishGameEvent("play", game, { gameId: game.id, player: state.user.id, win: win, points: pts });
   render();
 }
 function claimHdo() {
   if (!state) return;
   var pts = state.gameScores && state.gameScores[state.user.id] ? state.gameScores[state.user.id] : 0;
   if (pts <= 0) { toast("No points to claim"); return; }
-  // Convert points to a claimable balance note; actual HDO payout is done
-  // manually via Wallet -> Send tokens to the winner's address.
-  toast("You have " + pts + " points. Use Wallet to send HDO to a winner's address.", 5000);
+  toast("You have " + pts + " points. The admin pays HDO from the stake pool. Use Wallet to send HDO to a winner.", 5000);
 }
 function applySearch() {
   var input = document.getElementById("searchInput");
@@ -2166,28 +2467,41 @@ function renderPeople() {
 function renderGames() {
   if (!state.games) state.games = [];
   if (!state.gameScores) state.gameScores = {};
-  var html = '<div class="cm-card"><h3>Game Room</h3><p class="cm-muted">Create up to 10 games. Play to earn points and claim HDO rewards.</p></div>';
-  // create form
+  expireGames();
+  var html = '<div class="cm-card"><h3>Game Room</h3><p class="cm-muted">The admin creates games and stakes HDO. Anyone in the room can play. Games close after 24 hours and any HDO left in the pool returns to the admin.</p></div>';
   if (isAdmin() && state.games.length < 10) {
     html += '<div class="cm-card"><h3>Create game</h3>' +
-      '<div class="cm-inline"><input class="cm-input" id="gameName" placeholder="Game name"><select class="cm-input" id="gameType"><option value="dice">Dice roll</option><option value="coin">Coin flip</option><option value="guess">Number guess</option><option value="quiz">Quiz question</option></select></div>' +
+      '<div class="cm-inline"><input class="cm-input" id="gameName" placeholder="Game name" maxlength="40"><select class="cm-input" id="gameType"><option value="dice">Dice roll</option><option value="coin">Coin flip</option><option value="guess">Number guess</option><option value="quiz">Quiz question</option></select></div>' +
       '<div class="cm-inline"><input class="cm-input" id="gameStake" placeholder="Stake (HDO)" value="1"><button class="cm-btn primary" data-action="create-game">Create</button></div>' +
-      '<p class="cm-muted">Games created: ' + state.games.length + '/10</p></div>';
+      '<p class="cm-muted">Games created: ' + state.games.length + '/10 · each game runs for 24 hours</p></div>';
+  } else if (!isAdmin()) {
+    html += '<div class="cm-card"><p class="cm-muted">Only the admin can create or delete games. Join the room, wait for the admin to post a game, then tap Play.</p></div>';
   } else {
-    html += '<div class="cm-card"><p class="cm-muted">You have reached the 10-game limit.</p></div>';
+    html += '<div class="cm-card"><p class="cm-muted">You have reached the 10-game limit. Delete one to create another.</p></div>';
   }
-  // games list
   html += '<div class="cm-card"><h3>Games</h3>';
-  if (!state.games.length) html += '<p class="cm-muted">No games yet. Create one above.</p>';
-  state.games.forEach(function (g, idx) {
+  if (!state.games.length) html += '<p class="cm-muted">No games yet. The admin can create one above.</p>';
+  state.games.forEach(function (g) {
+    var status = g.status || "open";
+    var statusLabel = status === "open" ? "Open" : (status === "finished" ? "Prize pool finished" : "Returned to admin");
+    var left = "";
+    if (status === "open" && g.expiresAt) {
+      var ms = Number(g.expiresAt) - Date.now();
+      if (ms > 0) {
+        var hours = Math.floor(ms / 3600000);
+        var mins = Math.floor((ms % 3600000) / 60000);
+        left = " · " + (hours > 0 ? hours + "h " : "") + mins + "m left";
+      }
+    }
     html += '<div class="cm-row" style="flex-direction:column;align-items:stretch;gap:6px">' +
-      '<div><b>' + escapeHTML(g.name) + '</b> <span class="cm-muted">(' + escapeHTML(g.type) + ')</span></div>' +
-      '<div class="cm-muted">Stake: ' + escapeHTML(g.stake) + ' HDO · plays: ' + g.plays + ' · by ' + escapeHTML(g.creator || "anon") + ' · status: ' + (g.status || 'open') + '</div>' +
-      '<div class="cm-btn-row"><button class="cm-btn primary" data-action="play-game" data-id="' + escapeHTML(g.id) + '">Play</button><button class="cm-btn" data-action="delete-game" data-id="' + escapeHTML(g.id) + '">Delete</button></div>' +
+      '<div><b>' + escapeHTML(g.name) + '</b> <span class="cm-muted">(' + escapeHTML(g.type) + ')</span> · <span class="cm-game-status ' + escapeHTML(status) + '">' + escapeHTML(statusLabel) + '</span></div>' +
+      '<div class="cm-muted">Stake: ' + escapeHTML(g.stake) + ' HDO · pool: ' + escapeHTML(String(g.prizePool == null ? g.stake : g.prizePool)) + ' HDO · plays: ' + g.plays + left + '</div>' +
+      '<div class="cm-muted">By ' + escapeHTML(g.creator || "admin") + (g.lastWinner ? " · last winner: " + escapeHTML(g.lastWinner) : "") + '</div>' +
+      '<div class="cm-btn-row"><button class="cm-btn primary" data-action="play-game" data-id="' + escapeHTML(g.id) + '"' + (status === "open" ? "" : " disabled") + '>Play</button>' +
+      (isAdmin() ? '<button class="cm-btn" data-action="delete-game" data-id="' + escapeHTML(g.id) + '">Delete</button>' : '') + '</div>' +
       '</div>';
   });
   html += '</div>';
-  // leaderboard
   var scores = Object.keys(state.gameScores).map(function (k) { return { id: k, pts: state.gameScores[k] }; }).sort(function (a, b) { return b.pts - a.pts; });
   html += '<div class="cm-card"><h3>Leaderboard</h3>';
   if (!scores.length) html += '<p class="cm-muted">No scores yet.</p>';
@@ -2212,6 +2526,9 @@ function renderMe() {
   html += '<div class="cm-card"><h3>Admin</h3>' + (isAdmin()
     ? '<p class="cm-muted">Admin mode is ON' + (state.user.id === DEV_ID ? "" : " (unlocked)") + '. Grant verified badges in People.</p><div class="cm-btn-row"><button class="cm-btn danger" data-action="lock-dev">Turn off admin mode</button></div>'
     : '<p class="cm-muted">Enter the admin code to unlock verified-badge tools.</p><div class="cm-inline"><input class="cm-input" id="devCode" type="password" placeholder="Admin code"><button class="cm-btn primary" data-action="unlock-dev">Unlock</button></div>') + "</div>";
+  html += '<div class="cm-card"><h3>Message translation</h3><p class="cm-muted">Choose the language for the 🌐 Translate button in rooms and direct chats.</p><div class="cm-inline"><select class="cm-input" id="translateLang">' + TRANSLATE_LANGS.map(function (lang) {
+    return '<option value="' + lang.code + '"' + (translateTarget() === lang.code ? " selected" : "") + '>' + escapeHTML(lang.name) + '</option>';
+  }).join("") + '</select><button class="cm-btn primary" data-action="save-translate-lang">Save</button></div></div>';
   html += '<div class="cm-card"><h3>Chat wallpaper</h3><p class="cm-muted">Pick a background for your chats. It stays on this phone.</p><div class="cm-wallpapers">' + WALLPAPERS.map(function (name) {
     var labels = { pattern: "Pattern", sky: "Sky", mint: "Mint", sunset: "Sunset", night: "Night", paris: "Paris", lion: "Lion", community: "Community", unicorn: "Unicorn", plug: "Plug" };
     var active = chatWallpaper() === name;
@@ -2288,10 +2605,14 @@ function renderThread() {
     if (m.token) bubble += tokenCardHTML(m.token);
     else if (m.airdrop) bubble += airdropCardHTML(m);
     else if (m.text) bubble += escapeHTML(m.text);
+    if (m.tr && m.showTr) bubble += '<div class="cm-translated"><span class="cm-translated-label">🌐 ' + escapeHTML(translateLangName(m.trLang)) + '</span>' + escapeHTML(m.tr) + '</div>';
     if (m.status === "failed") bubble += '<div class="cm-msg-error">Not sent' + (m.error ? ": " + escapeHTML(m.error) : "") + ' <button class="cm-linkbtn" data-action="retry" data-id="' + escapeHTML(m.id) + '">Retry</button></div>';
     else if (m.status === "sending") bubble += '<div class="cm-msg-meta">Sending…</div>';
     else if (m.unencrypted) bubble += '<div class="cm-msg-meta">🔓 unencrypted</div>';
-    bubble += '<div class="cm-bubble-actions"><button type="button" class="cm-copybtn" data-action="copy-message" data-id="' + escapeHTML(m.id) + '">Copy</button></div>';
+    var canTranslate = !!(m.text && !m.token && !m.airdrop);
+    bubble += '<div class="cm-bubble-actions">' +
+      (canTranslate ? '<button type="button" class="cm-translatebtn" data-action="translate-message" data-id="' + escapeHTML(m.id) + '">' + (m.translating ? "Translating…" : (m.tr && m.showTr ? "Hide translation" : "Translate")) + '</button>' : '') +
+      '<button type="button" class="cm-copybtn" data-action="copy-message" data-id="' + escapeHTML(m.id) + '">Copy</button></div>';
     bubble += "</div>";
     html += bubble;
   });
@@ -2373,12 +2694,13 @@ function bindActions() {
       else if (action === "claim-airdrop") claimAirdropById(node.dataset.id);
       else if (action === "open-tx") openExternal(node.dataset.url);
       else if (action === "copy-message") copyMessage(node.dataset.id);
+      else if (action === "translate-message") translateMessage(node.dataset.id);
+      else if (action === "save-translate-lang") saveTranslateLang();
       else if (action === "view-profile") openProfileModal(node.dataset.id);
       else if (action === "open-botfather") openBotFather();
       else if (action === "open-bot") openThread(node.dataset.id);
       else if (action === "toggle-search") toggleThreadSearch();
       else if (action === "set-wallpaper") setWallpaper(node.dataset.value);
-      else if (action === "save-api") saveApiBase();
       else if (action === "unlock-dev") unlockDev();
       else if (action === "lock-dev") lockDev();
       else if (action === "grant-verified") grantVerified();

@@ -21,7 +21,7 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.9.12";
+  var VERSION = "1.9.13";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -38,6 +38,19 @@
   var RELAY_GUIDE_URL = "https://github.com/MrJeffAgency/Community/tree/main/relay";
   var TOPIC_PREFIX = "acode-community-v1-";
   var VERIFIED_TOPIC = TOPIC_PREFIX + "verified";
+  var GAMES_TOPIC = TOPIC_PREFIX + "games";
+  var TRANSLATE_LANGS = [
+    { code: "en", name: "English" },
+    { code: "fr", name: "French" },
+    { code: "es", name: "Spanish" },
+    { code: "pt", name: "Portuguese" },
+    { code: "ar", name: "Arabic" },
+    { code: "sw", name: "Swahili" },
+    { code: "hi", name: "Hindi" },
+    { code: "zh-CN", name: "Chinese" },
+    { code: "ru", name: "Russian" },
+    { code: "de", name: "German" }
+  ];
   var DEFAULT_PROFILE_IMAGE = "data:image/svg+xml;utf8," + encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">' +
     '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5b4bdb"/><stop offset="1" stop-color="#a855f7"/></linearGradient></defs>' +
@@ -67,6 +80,7 @@
      minute burned through public relay quotas, so it now refreshes every
      15 minutes and stays "online" for 20. */
   var PRESENCE_MS = 15 * 60 * 1000;
+  var GAME_LIFETIME_MS = 24 * 60 * 60 * 1000;
   var ONLINE_MS = 20 * 60 * 1000;
   var MAX_RELAY_ATTACHMENT_BYTES = 2 * 1024 * 1024;
   var MAX_TEXT = 1200;
@@ -1858,13 +1872,19 @@
     var games = [];
     var gamesInput = Array.isArray(input.games) ? input.games : [];
     gamesInput.slice(0, 10).forEach(function (value) {
-      if (!value || typeof value !== "object") return;
-      var name = String(value.name || "").trim().slice(0, 40);
-      if (!name) return;
-      var type = ["dice", "coin", "guess", "quiz"].indexOf(value.type) === -1 ? "dice" : value.type;
-      games.push({ id: String(value.id || uid()), name: name, type: type, stake: String(value.stake || "1").slice(0, 20), creator: String(value.creator || ""), createdAt: Number(value.createdAt) || Date.now(), plays: Math.max(0, Number(value.plays) || 0) });
+      var record = cleanGameRecord(value);
+      if (record) games.push(record);
     });
     var gameScores = (input.gameScores && typeof input.gameScores === "object") ? input.gameScores : {};
+
+    var gameCursor = null;
+    var gameCursorInput = input.gameCursor && typeof input.gameCursor === "object" ? input.gameCursor : null;
+    if (gameCursorInput && (gameCursorInput.id || gameCursorInput.ts)) {
+      gameCursor = {
+        id: typeof gameCursorInput.id === "string" ? gameCursorInput.id.slice(0, 80) : "",
+        ts: Number(gameCursorInput.ts) || 0
+      };
+    }
 
     var cryptoInput = input.crypto && typeof input.crypto === "object" ? input.crypto : {};
     var cryptoState = {
@@ -1884,7 +1904,7 @@
         hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : "",
         devMode: settingsInput.devMode === true,
         chatWallpaper: ["pattern", "sky", "mint", "sunset", "night", "paris", "lion", "community", "unicorn", "plug"].indexOf(settingsInput.chatWallpaper) === -1 ? "pattern" : settingsInput.chatWallpaper,
-        apiBase: ""
+        translateTo: translateLangCode(settingsInput.translateTo)
       },
       contacts: contacts,
       threads: threads,
@@ -1901,6 +1921,7 @@
       bots: bots,
       games: games,
       gameScores: gameScores,
+      gameCursor: gameCursor,
       welcome: input.welcome !== false
     };
   }
@@ -2247,6 +2268,32 @@
     return !!state && (state.user.id === DEV_ID || (state.settings && state.settings.devMode === true));
   }
 
+  function publishGameEvent(action, game, extra) {
+    if (!state) return Promise.resolve(false);
+    var envelope = {
+      app: APP_TAG,
+      v: ENVELOPE_VERSION,
+      id: uid(),
+      from: (state.settings && state.settings.devMode) ? DEV_ID : state.user.id,
+      name: state.user.name,
+      type: "game",
+      action: String(action || "create"),
+      ts: Date.now()
+    };
+    if (game) envelope.game = game;
+    if (extra) {
+      if (extra.gameId) envelope.gameId = extra.gameId;
+      if (extra.player) envelope.player = extra.player;
+      if (extra.win != null) envelope.win = !!extra.win;
+      if (extra.points != null) envelope.points = Number(extra.points) || 0;
+    }
+    return publish(envelope, GAMES_TOPIC).then(function () {
+      return true;
+    }).catch(function () {
+      return false;
+    });
+  }
+
   function publishVerifiedGrant(target) {
     var id = normalizeId(target);
     if (!id) return Promise.resolve(false);
@@ -2478,6 +2525,50 @@
       });
   }
 
+  function pollGames() {
+    if (!running || !state) return Promise.resolve();
+    var base = relayBase();
+    var cursor = state.gameCursor || null;
+    var url = base + "/" + encodeURIComponent(GAMES_TOPIC) +
+      "/json?poll=1&limit=300&since=" + encodeURIComponent(sinceValue(cursor));
+
+    return fetchWithTimeout(url, { cache: "no-store" }, 15000)
+      .then(function (response) {
+        if (!response.ok) throw new Error("Relay returned HTTP " + response.status);
+        return response.text();
+      })
+      .then(function (text) {
+        if (!running || !state) return;
+        var nextCursor = null;
+        var changed = false;
+        var lines = String(text || "").split("\n");
+        for (var i = 0; i < lines.length; i += 1) {
+          var line = lines[i].trim();
+          if (!line) continue;
+          var item;
+          try { item = JSON.parse(line); } catch (e) { continue; }
+          if (!item || item.event !== "message") continue;
+          if (item.id) {
+            nextCursor = {
+              id: String(item.id).slice(0, 80),
+              ts: Number(item.time) || Math.floor(Date.now() / 1000)
+            };
+          }
+          var envelope = parseEnvelopeText(item.message);
+          if (!envelope || envelope.app !== APP_TAG || Number(envelope.v) !== ENVELOPE_VERSION) continue;
+          if (envelope.type !== "game") continue;
+          if (normalizeId(envelope.from) === state.user.id) continue;
+          if (applyRemoteGame(envelope, true)) changed = true;
+        }
+        if (nextCursor) state.gameCursor = nextCursor;
+        if (nextCursor || changed) saveState();
+        if (changed) refreshGameUI();
+      })
+      .catch(function () {
+        /* Game sync errors are retried on the next poll. */
+      });
+  }
+
   function pollNow() {
     if (!running || !state || pollInFlight) return Promise.resolve();
     pollInFlight = true;
@@ -2533,8 +2624,9 @@
     });
 
     var verifiedPoll = pollVerified();
+    var gamePoll = pollGames();
 
-    return Promise.all([roomPoll, dmPoll, verifiedPoll])
+    return Promise.all([roomPoll, dmPoll, verifiedPoll, gamePoll])
       .then(function () {
         if (running) setStatus("online");
       })
@@ -2622,6 +2714,11 @@
 
     if (isKey) {
       saveState();
+      return;
+    }
+
+    if (envelope.type === "game") {
+      applyRemoteGame(envelope, false);
       return;
     }
 
@@ -3288,6 +3385,150 @@
     };
   }
 
+  function cleanGameRecord(input) {
+    var record = input && typeof input === "object" ? input : {};
+    var name = String(record.name || "").replace(/[\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
+    if (!name) return null;
+    var type = ["dice", "coin", "guess", "quiz"].indexOf(record.type) === -1 ? "dice" : record.type;
+    var stake = String(record.stake == null ? "1" : record.stake).replace(/[^0-9.]/g, "").slice(0, 20) || "1";
+    var created = Number(record.createdAt) || Date.now();
+    var expires = Number(record.expiresAt) || (created + 24 * 60 * 60 * 1000);
+    var status = ["open", "finished", "returned"].indexOf(record.status) === -1 ? "open" : record.status;
+    var players = Array.isArray(record.players) ? record.players.map(normalizeId).filter(Boolean).slice(0, 100) : [];
+    var prizePool = Number(record.prizePool);
+    if (!isFinite(prizePool) || prizePool < 0) prizePool = Math.max(0, parseFloat(stake) || 0);
+    return {
+      id: String(record.id || uid()).slice(0, 80),
+      name: name,
+      type: type,
+      stake: stake,
+      creator: normalizeId(record.creator) || "",
+      createdAt: created,
+      expiresAt: expires,
+      plays: Math.max(0, Number(record.plays) || 0),
+      prizePool: Math.round(prizePool * 1000) / 1000,
+      paid: Math.max(0, Number(record.paid) || 0),
+      players: players,
+      lastWinner: normalizeId(record.lastWinner) || "",
+      status: status
+    };
+  }
+
+  function translateLangCode(value) {
+    var code = String(value || "").trim();
+    for (var i = 0; i < TRANSLATE_LANGS.length; i += 1) {
+      if (TRANSLATE_LANGS[i].code === code) return code;
+    }
+    return "en";
+  }
+
+  function translateLangName(code) {
+    var target = translateLangCode(code);
+    for (var i = 0; i < TRANSLATE_LANGS.length; i += 1) {
+      if (TRANSLATE_LANGS[i].code === target) return TRANSLATE_LANGS[i].name;
+    }
+    return "English";
+  }
+
+  function translateTarget() {
+    return translateLangCode(state && state.settings ? state.settings.translateTo : "en");
+  }
+
+  function detectLanguageCode(value) {
+    var text = String(value || "");
+    if (/[\u0600-\u06FF]/.test(text)) return "ar";
+    if (/[\u0400-\u04FF]/.test(text)) return "ru";
+    if (/[\u4E00-\u9FFF]/.test(text)) return "zh-CN";
+    if (/[\u0900-\u097F]/.test(text)) return "hi";
+    return "en";
+  }
+
+  function decodeTranslation(value) {
+    return String(value || "")
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">");
+  }
+
+  function translateWithGoogle(value, lang) {
+    var url = "https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=auto&tl=" +
+      encodeURIComponent(lang) + "&q=" + encodeURIComponent(value);
+    return fetchWithTimeout(url, { cache: "no-store" }, 20000).then(function (response) {
+      if (!response.ok) throw new Error("Translate HTTP " + response.status);
+      return response.json();
+    }).then(function (data) {
+      var parts = data && Array.isArray(data[0]) ? data[0] : [];
+      var out = "";
+      for (var i = 0; i < parts.length; i += 1) {
+        if (parts[i] && typeof parts[i][0] === "string") out += parts[i][0];
+      }
+      out = out.trim();
+      if (!out) throw new Error("No translation returned");
+      return { text: out, source: String(data[2] || "") };
+    });
+  }
+
+  function translateText(text, target) {
+    var lang = translateLangCode(target);
+    var value = String(text || "").slice(0, MAX_TEXT);
+    if (!value.trim()) return Promise.reject(new Error("There is no text to translate"));
+    var source = detectLanguageCode(value);
+    if (source === lang) return Promise.resolve({ text: value, source: source });
+    var url = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(value) +
+      "&langpair=" + encodeURIComponent(source + "|" + lang);
+    return fetchWithTimeout(url, { cache: "no-store" }, 20000).then(function (response) {
+      if (!response.ok) throw new Error("Translate HTTP " + response.status);
+      return response.json();
+    }).then(function (data) {
+      if (data && data.quotaFinished) throw new Error("Translation limit reached");
+      var out = data && data.responseData ? decodeTranslation(data.responseData.translatedText) : "";
+      out = out.trim();
+      if (!out) throw new Error("No translation returned");
+      return { text: out, source: source };
+    }).catch(function () {
+      return translateWithGoogle(value, lang);
+    });
+  }
+
+  function translateMessage(messageId) {
+    var message = findMessage(messageId);
+    if (!message || !message.text || message.token || message.airdrop) return;
+    var target = translateTarget();
+    if (message.tr && message.trLang === target) {
+      message.showTr = !message.showTr;
+      saveState();
+      renderThreadMessages();
+      return;
+    }
+    if (message.translating) return;
+    message.translating = true;
+    renderThreadMessages();
+    translateText(message.text, target).then(function (result) {
+      message.tr = result.text;
+      message.trLang = target;
+      message.trSrc = result.source;
+      message.showTr = true;
+      message.translating = false;
+      saveState();
+      renderThreadMessages();
+    }).catch(function (error) {
+      message.translating = false;
+      renderThreadMessages();
+      toastMsg("Could not translate: " + (error && error.message ? error.message : String(error)), 5000);
+    });
+  }
+
+  function saveTranslateLang() {
+    if (!state) return;
+    var select = $root && $root.querySelector('[data-role="translatelang"]');
+    if (!state.settings) state.settings = {};
+    state.settings.translateTo = translateLangCode(select ? select.value : "en");
+    saveState();
+    toastMsg("Translation language set to " + translateLangName(state.settings.translateTo));
+  }
+
   function findBotById(id) {
     if (!state || !state.bots) return null;
     var target = normalizeId(id);
@@ -3793,6 +4034,15 @@
     }
   }
 
+  function gameById(id) {
+    if (!state || !state.games) return null;
+    var target = String(id || "");
+    for (var i = 0; i < state.games.length; i += 1) {
+      if (state.games[i] && state.games[i].id === target) return state.games[i];
+    }
+    return null;
+  }
+
   function createGame() {
     if (!state) return;
     if (!isAdmin()) { toastMsg("Only the admin can create games"); return; }
@@ -3801,62 +4051,170 @@
     var nameInput = $root.querySelector('[data-role="gamename"]');
     var typeInput = $root.querySelector('[data-role="gametype"]');
     var stakeInput = $root.querySelector('[data-role="gamestake"]');
-    var name = String(nameInput ? nameInput.value : "").trim();
+    var name = String(nameInput ? nameInput.value : "").replace(/\s+/g, " ").trim();
     if (!name) { toastMsg("Enter a game name"); return; }
     var type = typeInput ? typeInput.value : "dice";
-    var stake = String(stakeInput ? stakeInput.value : "1").trim() || "1";
+    var stake = String(stakeInput ? stakeInput.value : "1").replace(/[^0-9.]/g, "").trim() || "1";
     var nowMs = Date.now();
-    state.games.push({ id: uid(), name: name, type: type, stake: stake, creator: state.user.id, createdAt: nowMs, plays: 0, status: "open", prize: stake, expiresAt: nowMs + (24 * 60 * 60 * 1000) });
+    var game = cleanGameRecord({
+      id: uid(),
+      name: name.slice(0, 40),
+      type: type,
+      stake: stake,
+      creator: state.user.id,
+      createdAt: nowMs,
+      expiresAt: nowMs + GAME_LIFETIME_MS,
+      plays: 0,
+      prizePool: Math.max(0, parseFloat(stake) || 0),
+      paid: 0,
+      players: [],
+      status: "open"
+    });
+    if (!game) { toastMsg("Enter a game name"); return; }
+    state.games.push(game);
     saveState();
-    toastMsg("Game created");
+    publishGameEvent("create", game);
+    toastMsg("Game created" + (isAdmin() ? "" : ""));
     render();
   }
+
   function expireGames() {
-    if (!state || !state.games) return;
+    if (!state || !state.games) return false;
     var nowMs = Date.now();
+    var changed = false;
     state.games.forEach(function (g) {
       if (!g || g.status !== "open") return;
       if (g.expiresAt && nowMs > (Number(g.expiresAt) || 0)) {
         g.status = "returned";
+        changed = true;
       }
     });
+    if (changed) saveState();
+    return changed;
   }
+
+  function refreshGameUI() {
+    if (ui.mode === "tabs" && ui.tab === "games" && $root && pageRef && pageRef.isConnected) render();
+  }
+
+  function applyRemoteGame(envelope, silent) {
+    if (!state || !envelope) return false;
+    var action = String(envelope.action || "create");
+    var fromAdmin = normalizeId(envelope.from) === DEV_ID;
+    if (!state.games) state.games = [];
+
+    if (action === "delete") {
+      var deleteId = String(envelope.gameId || (envelope.game && envelope.game.id) || "").slice(0, 80);
+      if (!deleteId) return false;
+      var before = state.games.length;
+      state.games = state.games.filter(function (g) { return g.id !== deleteId; });
+      if (state.games.length === before) return false;
+      if (!silent) { saveState(); refreshGameUI(); }
+      return true;
+    }
+
+    if (action === "play") {
+      var playId = String(envelope.gameId || "").slice(0, 80);
+      var player = normalizeId(envelope.player);
+      if (!playId || !player) return false;
+      var game = gameById(playId);
+      if (!game || game.status !== "open") return false;
+      game.plays = Math.max(0, Number(game.plays) || 0) + 1;
+      if (!Array.isArray(game.players)) game.players = [];
+      if (game.players.indexOf(player) === -1 && game.players.length < 100) game.players.push(player);
+      if (envelope.win) {
+        var stakeNum = Math.max(0, parseFloat(game.stake) || 0);
+        game.prizePool = Math.max(0, (Number(game.prizePool) || 0) - stakeNum);
+        game.paid = Math.max(0, Number(game.paid) || 0) + stakeNum;
+        game.lastWinner = player;
+        if (game.prizePool <= 0) game.status = "finished";
+      }
+      if (!silent) { saveState(); refreshGameUI(); }
+      return true;
+    }
+
+    if (!fromAdmin) return false;
+    var record = cleanGameRecord(envelope.game);
+    if (!record) return false;
+    var index = -1;
+    for (var i = 0; i < state.games.length; i += 1) {
+      if (state.games[i] && state.games[i].id === record.id) { index = i; break; }
+    }
+    if (index === -1) {
+      if (state.games.length >= 10) return false;
+      record.remote = true;
+      state.games.push(record);
+    } else {
+      var current = state.games[index];
+      record.plays = Math.max(Number(current.plays) || 0, record.plays);
+      record.paid = Math.max(Number(current.paid) || 0, record.paid);
+      if (isFinite(Number(current.prizePool))) {
+        record.prizePool = Math.min(Number(current.prizePool), record.prizePool);
+      }
+      if (Array.isArray(current.players) && current.players.length) record.players = current.players;
+      record.lastWinner = current.lastWinner || record.lastWinner;
+      if (current.status === "finished" || current.status === "returned") record.status = current.status;
+      record.remote = !!(current.remote || fromAdmin);
+      state.games[index] = record;
+    }
+    if (!silent) { saveState(); refreshGameUI(); }
+    return true;
+  }
+
   function deleteGame(id) {
     if (!state || !state.games) return;
+    if (!isAdmin()) { toastMsg("Only the admin can delete games"); return; }
+    var game = gameById(id);
+    if (!game) return;
     state.games = state.games.filter(function (g) { return g.id !== id; });
     saveState();
+    publishGameEvent("delete", { id: id });
     render();
   }
+
   function playGame(id) {
     if (!state || !state.games) return;
-    var game = null;
-    for (var i = 0; i < state.games.length; i += 1) if (state.games[i].id === id) { game = state.games[i]; break; }
+    var game = gameById(id);
     if (!game) return;
-    game.plays = (game.plays || 0) + 1;
+    if (game.status !== "open") { toastMsg("This game is closed"); return; }
+    if (game.expiresAt && Date.now() > (Number(game.expiresAt) || 0)) {
+      expireGames();
+      render();
+      toastMsg("This game expired. The remaining HDO went back to the admin.");
+      return;
+    }
+    game.plays = Math.max(0, Number(game.plays) || 0) + 1;
     var win = false;
     if (game.type === "dice") win = Math.floor(Math.random() * 6) + 1 >= 4;
     else if (game.type === "coin") win = Math.random() < 0.5;
     else if (game.type === "guess") win = Math.random() < 0.35;
     else if (game.type === "quiz") win = Math.random() < 0.5;
     if (!state.gameScores) state.gameScores = {};
+    if (!Array.isArray(game.players)) game.players = [];
+    if (game.players.indexOf(state.user.id) === -1 && game.players.length < 100) game.players.push(state.user.id);
+    var pts = 0;
     if (win) {
-      var pts = Math.max(1, Math.round((parseFloat(game.stake) || 1) * 10));
+      pts = Math.max(1, Math.round((parseFloat(game.stake) || 1) * 10));
       state.gameScores[state.user.id] = (state.gameScores[state.user.id] || 0) + pts;
-      game.status = "won";
-      game.winner = state.user.id;
-      game.plays = (game.plays || 0) + 1;
-      toastMsg("You won " + pts + " points!");
+      var stakeNum = Math.max(0, parseFloat(game.stake) || 0);
+      game.prizePool = Math.max(0, (Number(game.prizePool) || 0) - stakeNum);
+      game.paid = Math.max(0, Number(game.paid) || 0) + stakeNum;
+      game.lastWinner = state.user.id;
+      if (game.prizePool <= 0) game.status = "finished";
+      toastMsg("You won " + pts + " points!" + (game.status === "finished" ? " The prize pool is finished." : ""));
     } else {
       toastMsg("You lost. Try again!");
     }
     saveState();
+    publishGameEvent("play", game, { gameId: game.id, player: state.user.id, win: win, points: pts });
     render();
   }
+
   function claimHdo() {
     if (!state) return;
     var pts = state.gameScores && state.gameScores[state.user.id] ? state.gameScores[state.user.id] : 0;
     if (pts <= 0) { toastMsg("No points to claim"); return; }
-    toastMsg("You have " + pts + " points. Use Wallet to send HDO to a winner.", 5000);
+    toastMsg("You have " + pts + " points. The admin pays HDO from the stake pool. Use Wallet to send HDO to a winner.", 5000);
   }
 
   function applySearchFilter() {
@@ -4491,7 +4849,13 @@
     if (message.text && !message.token && !message.airdrop && !(message.image && message.text === "📷 Photo")) {
       bubble += '<div class="cm-text">' + formatMessageText(message.text) + "</div>";
     }
+    if (message.tr && message.showTr) {
+      bubble += '<div class="cm-translated"><span class="cm-translated-label">🌐 ' +
+        escapeHTML(translateLangName(message.trLang)) + "</span>" + formatMessageText(message.tr) + "</div>";
+    }
     if (!bubble) bubble = '<div class="cm-text">📷 Photo</div>';
+    var canTranslate = !!(message.text && !message.token && !message.airdrop &&
+      !(message.image && message.text === "📷 Photo"));
 
     return '<div class="cm-msg ' + (mine ? "mine" : "theirs") +
       (isAi ? " cm-msg-ai" : "") + '" data-msg-id="' +
@@ -4500,6 +4864,10 @@
         '<div class="cm-bubble' + (message.image ? " cm-bubble-media" : "") +
           (message.airdrop ? " cm-bubble-airdrop" : "") + '">' + bubble + "</div>" +
         '<div class="cm-msgmeta"><span>' + escapeHTML(formatClock(message.ts)) + "</span>" + status +
+          (canTranslate ? '<button type="button" class="cm-msgtranslate' + (message.tr && message.showTr ? " active" : "") +
+            '" data-action="translate-message" data-id="' + escapeHTML(message.id) +
+            '" title="' + (message.tr && message.showTr ? "Hide translation" : "Translate message") +
+            '" aria-label="Translate message">' + (message.translating ? "…" : "🌐") + "</button>" : "") +
           '<button type="button" class="cm-msgcopy" data-action="copy-message" data-id="' +
           escapeHTML(message.id) + '" title="Copy message" aria-label="Copy message">' +
           '<span class="icon content_copy"></span></button></div>' +
@@ -4636,11 +5004,12 @@
   function gamesHTML() {
     if (!state.games) state.games = [];
     if (!state.gameScores) state.gameScores = {};
-    var html = '<div class="cm-card"><h3>Game Room</h3><p class="cm-muted">Create up to 10 games. Play to earn points and claim HDO.</p></div>';
+    expireGames();
+    var html = '<div class="cm-card"><h3>Game Room</h3><p class="cm-muted">The admin creates games and stakes HDO. Anyone in the room can play. Games close after 24 hours and any HDO left in the pool returns to the admin.</p></div>';
     if (isAdmin() && state.games.length < 10) {
       html += '<div class="cm-card"><h3>Create game</h3>' +
         '<div class="cm-inline">' +
-          '<input class="cm-input" data-role="gamename" type="text" placeholder="Game name">' +
+          '<input class="cm-input" data-role="gamename" type="text" placeholder="Game name" maxlength="40">' +
           '<select class="cm-input" data-role="gametype">' +
             '<option value="dice">Dice roll</option>' +
             '<option value="coin">Coin flip</option>' +
@@ -4652,20 +5021,34 @@
           '<input class="cm-input" data-role="gamestake" type="text" placeholder="Stake (HDO)" value="1">' +
           '<button type="button" class="cm-btn primary" data-action="create-game">Create</button>' +
         "</div>" +
-        '<p class="cm-muted">Games: ' + state.games.length + "/10</p>" +
+        '<p class="cm-muted">Games: ' + state.games.length + "/10 · each game runs for 24 hours</p>" +
       "</div>";
+    } else if (!isAdmin()) {
+      html += '<div class="cm-card"><p class="cm-muted">Only the admin can create or delete games. Join the room, wait for the admin to post a game, then tap Play.</p></div>';
     } else {
-      html += '<div class="cm-card"><p class="cm-muted">Game limit reached (10).</p></div>';
+      html += '<div class="cm-card"><p class="cm-muted">Game limit reached (10). Delete one to create another.</p></div>';
     }
     html += '<div class="cm-card"><h3>Games</h3>';
-    if (!state.games.length) html += '<p class="cm-muted">No games yet.</p>';
+    if (!state.games.length) html += '<p class="cm-muted">No games yet. The admin can create one above.</p>';
     state.games.forEach(function (g) {
+      var status = g.status || "open";
+      var statusLabel = status === "open" ? "Open" : (status === "finished" ? "Prize pool finished" : "Returned to admin");
+      var left = "";
+      if (status === "open" && g.expiresAt) {
+        var ms = Number(g.expiresAt) - Date.now();
+        if (ms > 0) {
+          var hours = Math.floor(ms / 3600000);
+          var mins = Math.floor((ms % 3600000) / 60000);
+          left = " · " + (hours > 0 ? hours + "h " : "") + mins + "m left";
+        }
+      }
       html += '<div class="cm-row" style="flex-direction:column;align-items:stretch;gap:6px">' +
-        '<div><b>' + escapeHTML(g.name) + '</b> <span class="cm-muted">(' + escapeHTML(g.type) + ")</span></div>" +
-        '<div class="cm-muted">Stake: ' + escapeHTML(g.stake) + ' HDO · plays: ' + g.plays + ' · by ' + escapeHTML(g.creator) + "</div>" +
+        '<div><b>' + escapeHTML(g.name) + '</b> <span class="cm-muted">(' + escapeHTML(g.type) + ')</span> · <span class="cm-game-status ' + escapeHTML(status) + '">' + escapeHTML(statusLabel) + '</span></div>' +
+        '<div class="cm-muted">Stake: ' + escapeHTML(g.stake) + ' HDO · pool: ' + escapeHTML(String(g.prizePool == null ? g.stake : g.prizePool)) + ' HDO · plays: ' + g.plays + left + "</div>" +
+        '<div class="cm-muted">By ' + escapeHTML(g.creator || "admin") + (g.lastWinner ? " · last winner: " + escapeHTML(g.lastWinner) : "") + "</div>" +
         '<div class="cm-button-row">' +
-          '<button type="button" class="cm-btn primary" data-action="play-game" data-id="' + escapeHTML(g.id) + '">Play</button>' +
-          '<button type="button" class="cm-btn danger" data-action="delete-game" data-id="' + escapeHTML(g.id) + '">Delete</button>' +
+          '<button type="button" class="cm-btn primary" data-action="play-game" data-id="' + escapeHTML(g.id) + '"' + (status === "open" ? "" : " disabled") + ">Play</button>" +
+          (isAdmin() ? '<button type="button" class="cm-btn danger" data-action="delete-game" data-id="' + escapeHTML(g.id) + '">Delete</button>' : "") +
         "</div>" +
       "</div>";
     });
@@ -4811,6 +5194,20 @@
         "</div>" +
         "<p>The default relay is the community relay (no daily message limit). Everyone you chat with must use the same relay. Changing it clears the sync position.</p>" +
       "</details>" +
+
+      '<div class="cm-card">' +
+        "<h3>Message translation</h3>" +
+        '<p class="cm-muted">Choose the language for the 🌐 Translate button in rooms and direct chats.</p>' +
+        '<div class="cm-inline">' +
+          '<select class="cm-input" data-role="translatelang">' +
+            TRANSLATE_LANGS.map(function (lang) {
+              var active = translateTarget() === lang.code;
+              return '<option value="' + lang.code + '"' + (active ? " selected" : "") + ">" + escapeHTML(lang.name) + "</option>";
+            }).join("") +
+          "</select>" +
+          '<button type="button" class="cm-btn primary" data-action="save-translate-lang">Save</button>' +
+        "</div>" +
+      "</div>" +
 
       '<div class="cm-card">' +
         "<h3>Chat wallpaper</h3>" +
@@ -5042,6 +5439,10 @@
       openProfileModal(target.dataset.id);
     } else if (action === "copy-message") {
       copyMessage(target.dataset.id);
+    } else if (action === "translate-message") {
+      translateMessage(target.dataset.id);
+    } else if (action === "save-translate-lang") {
+      saveTranslateLang();
     } else if (action === "send") {
       sendMessage();
     } else if (action === "retry") {

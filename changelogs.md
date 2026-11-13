@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.9.13
+- Games created by the admin are now shared with everyone in the room and survive app restarts (synced through the relay).
+- Game results sync too: plays, prize pool, winner and 24-hour expiry are visible to all players.
+- Added message translation in rooms and direct chats: tap 🌐 on any message to translate it. Choose the target language in **Me → Message translation**.
+- Removed the last leftover bot-API field.
+
+## 1.9.12
+- **Quiz games.** The Game Room now has quiz questions alongside dice, coin flip and number guess.
+- **Admin-only games.** Only the admin can create or delete games and stake HDO. Anyone in the room can play.
+- **24-hour games.** Games close after 24 hours and any HDO left in the prize pool returns to the admin.
+- **Ten chat wallpapers.** Added Paris, Lion, Community, Unicorn and Plug to the existing Pattern, Sky, Mint, Sunset and Night backgrounds.
+
 ## 1.9.11
 - Removed all Community Bot API references; bots now run locally on the device (no remote API).
 - Added a **Game Room** tab (up to 10 games: dice, coin flip, number guess) with points and a leaderboard.
