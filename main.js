@@ -21,7 +21,7 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.9.15";
+  var VERSION = "1.9.16";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -94,6 +94,9 @@
   var POINTS_PER_HDO = 10;
   var CASHOUT_POINTS = 1000;
   var CASHOUT_HDO = 100;
+  var PLAY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+  var DAILY_BONUS_POINTS = 20;
+  var DAILY_BONUS_MS = 24 * 60 * 60 * 1000;
   var QUIZ_BANK = [
     { q: "Which planet is known as the Red Planet?", options: ["Venus", "Mars", "Jupiter", "Mercury"], answer: 1 },
     { q: "What does HTML stand for?", options: ["Hyper Text Markup Language", "High Tech Modern Link", "Home Tool Markup Language", "Hyperlink Text Machine Language"], answer: 0 },
@@ -1911,6 +1914,15 @@
       if (record) cashouts.push(record);
     });
 
+    var playDaily = {};
+    var playDailyInput = input.playDaily && typeof input.playDaily === "object" ? input.playDaily : {};
+    GAME_TYPES.forEach(function (type) {
+      var ts = Number(playDailyInput[type]) || 0;
+      if (ts > 0 && Date.now() - ts < PLAY_COOLDOWN_MS * 30) playDaily[type] = ts;
+    });
+    var bonusAt = Number(input.bonusAt) || 0;
+    if (bonusAt > 0 && Date.now() - bonusAt > DAILY_BONUS_MS * 30) bonusAt = 0;
+
     var gameCursor = null;
     var gameCursorInput = input.gameCursor && typeof input.gameCursor === "object" ? input.gameCursor : null;
     if (gameCursorInput && (gameCursorInput.id || gameCursorInput.ts)) {
@@ -1956,6 +1968,8 @@
       games: games,
       gameScores: gameScores,
       cashouts: cashouts,
+      playDaily: playDaily,
+      bonusAt: bonusAt,
       gameCursor: gameCursor,
       welcome: input.welcome !== false
     };
@@ -4228,10 +4242,8 @@
       if (game.players.indexOf(player) === -1 && game.players.length < 100) game.players.push(player);
       if (envelope.win) {
         var stakeNum = Math.max(0, parseFloat(game.stake) || 0);
-        game.prizePool = Math.max(0, (Number(game.prizePool) || 0) - stakeNum);
         game.paid = Math.max(0, Number(game.paid) || 0) + stakeNum;
         game.lastWinner = player;
-        if (game.prizePool <= 0) game.status = "finished";
       }
       if (!silent) { saveState(); refreshGameUI(); }
       return true;
@@ -4331,13 +4343,52 @@
     return state && state.gameScores ? (Number(state.gameScores[state.user.id]) || 0) : 0;
   }
 
+  function gameCooldownLeft(type) {
+    if (!state || !state.playDaily) return 0;
+    var ts = Number(state.playDaily[type]) || 0;
+    if (!ts) return 0;
+    var left = PLAY_COOLDOWN_MS - (Date.now() - ts);
+    return left > 0 ? left : 0;
+  }
+
+  function cooldownLabel(ms) {
+    var totalMinutes = Math.max(1, Math.ceil(ms / 60000));
+    var hours = Math.floor(totalMinutes / 60);
+    var mins = totalMinutes % 60;
+    return (hours > 0 ? hours + "h " : "") + mins + "m";
+  }
+
+  function bonusCooldownLeft() {
+    if (!state || !state.bonusAt) return 0;
+    var left = DAILY_BONUS_MS - (Date.now() - state.bonusAt);
+    return left > 0 ? left : 0;
+  }
+
+  function claimDailyBonus() {
+    if (!state) return;
+    var wait = bonusCooldownLeft();
+    if (wait > 0) {
+      toastMsg("Daily bonus already claimed. Next bonus in " + cooldownLabel(wait) + ".");
+      return;
+    }
+    if (!state.gameScores) state.gameScores = {};
+    state.gameScores[state.user.id] = gameScore() + DAILY_BONUS_POINTS;
+    state.bonusAt = Date.now();
+    saveState();
+    render();
+    toastMsg("Daily bonus claimed: +" + DAILY_BONUS_POINTS + " points");
+  }
+
   function finishGamePlay(game, win, detail) {
     if (!state || !game) return;
-    if (win === null) {
-      ui.gameResult = { id: game.id, win: null, detail: detail || "Tie — try again." };
+    var wait = gameCooldownLeft(game.type);
+    if (wait > 0) {
+      ui.gameResult = { id: game.id, win: null, detail: "Daily limit reached for " + gameTypeLabel(game.type) + ". Next play in " + cooldownLabel(wait) + "." };
       render();
       return;
     }
+    if (!state.playDaily) state.playDaily = {};
+    state.playDaily[game.type] = Date.now();
     game.plays = Math.max(0, Number(game.plays) || 0) + 1;
     if (!state.gameScores) state.gameScores = {};
     if (!Array.isArray(game.players)) game.players = [];
@@ -4347,14 +4398,12 @@
       pts = Math.max(1, Math.round((parseFloat(game.stake) || 1) * POINTS_PER_HDO));
       state.gameScores[state.user.id] = (Number(state.gameScores[state.user.id]) || 0) + pts;
       var stakeNum = Math.max(0, parseFloat(game.stake) || 0);
-      game.prizePool = Math.max(0, (Number(game.prizePool) || 0) - stakeNum);
       game.paid = Math.max(0, Number(game.paid) || 0) + stakeNum;
       game.lastWinner = state.user.id;
-      if (game.prizePool <= 0) game.status = "finished";
     }
-    ui.gameResult = { id: game.id, win: win, detail: detail || (win ? "You won!" : "You lost."), pts: pts };
+    ui.gameResult = { id: game.id, win: win, detail: detail || (win ? "You won!" : (win === false ? "You lost." : "Tie — try again.")), pts: pts };
     saveState();
-    publishGameEvent("play", game, { gameId: game.id, player: state.user.id, win: win, points: pts });
+    publishGameEvent("play", game, { gameId: game.id, player: state.user.id, win: !!win, points: pts });
     render();
   }
 
@@ -4407,8 +4456,7 @@
     var options = ["rock", "paper", "scissors"];
     var cpu = options[Math.floor(Math.random() * 3)];
     if (choice === cpu) {
-      ui.gameResult = { id: game.id, win: null, detail: "You both picked " + choice + ". Tie — try again." };
-      render();
+      finishGamePlay(game, null, "You both picked " + choice + ". Tie — try again.");
       return;
     }
     var win = (choice === "rock" && cpu === "scissors") ||
@@ -4439,25 +4487,28 @@
 
   function gameStageHTML(game) {
     if (game.status !== "open") {
-      return '<div class="cm-gameclosed">' + (game.status === "finished" ? "🏁 Prize pool finished" : "⏰ Returned to admin") + "</div>";
+      return '<div class="cm-gameclosed">' + (game.status === "finished" ? "🏁 This game has ended" : "⏰ Returned to admin") + "</div>";
     }
     var result = ui.gameResult && ui.gameResult.id === game.id ? ui.gameResult : null;
+    var wait = gameCooldownLeft(game.type);
     var html = '<div class="cm-gamestage">';
     if (game.type === "dice") {
-      html += '<div class="cm-diceface">' + dieFace(ui.gameResult && ui.gameResult.id === game.id ? (ui.gameRoll || 1) : 0) + "</div>";
+      html += '<div class="cm-diceface">' + dieFace(result ? (ui.gameRoll || 1) : 0) + "</div>";
     } else if (game.type === "coin") {
       html += '<div class="cm-coinface">' + (ui.gameCoin === "tails" ? "🪙" : "🪙") + "</div>";
     } else if (game.type === "guess") {
       html += '<div class="cm-gamebig">' + (ui.gameGuess ? ui.gameGuess : "?") + "</div>";
     } else if (game.type === "quiz") {
-      if (!ui.gameQuiz || ui.gameQuiz.id !== game.id || result) {
-        ui.gameQuiz = { id: game.id, index: Math.floor(Math.random() * QUIZ_BANK.length) };
+      if (wait <= 0) {
+        if (!ui.gameQuiz || ui.gameQuiz.id !== game.id || result) {
+          ui.gameQuiz = { id: game.id, index: Math.floor(Math.random() * QUIZ_BANK.length) };
+        }
+        var quiz = QUIZ_BANK[ui.gameQuiz.index];
+        html += '<div class="cm-quizq">' + escapeHTML(quiz.q) + "</div>";
+        quiz.options.forEach(function (option, i) {
+          html += '<button type="button" class="cm-btn cm-quizoption" data-action="game-quiz" data-i="' + i + '">' + escapeHTML(option) + "</button>";
+        });
       }
-      var quiz = QUIZ_BANK[ui.gameQuiz.index];
-      html += '<div class="cm-quizq">' + escapeHTML(quiz.q) + "</div>";
-      quiz.options.forEach(function (option, i) {
-        html += '<button type="button" class="cm-btn cm-quizoption" data-action="game-quiz" data-i="' + i + '">' + escapeHTML(option) + "</button>";
-      });
     } else if (game.type === "rps") {
       html += '<div class="cm-gamebig">✊✋✌️</div>';
     } else if (game.type === "wheel") {
@@ -4472,28 +4523,43 @@
       html += '<div class="cm-gameresult ' + (result.win === true ? "win" : result.win === false ? "lose" : "tie") + '">' +
         (result.detail || "") + (result.pts ? '<b> +' + result.pts + " points</b>" : "") + "</div>";
     }
-    html += '<div class="cm-gamecontrols">';
-    if (game.type === "dice") {
-      html += '<button type="button" class="cm-btn primary" data-action="game-roll">' + (result ? "Roll again" : "Roll the die") + "</button>";
-    } else if (game.type === "coin") {
-      html += '<button type="button" class="cm-btn primary" data-action="game-coin" data-choice="heads">Heads</button>' +
-        '<button type="button" class="cm-btn primary" data-action="game-coin" data-choice="tails">Tails</button>';
-    } else if (game.type === "guess") {
-      for (var n = 1; n <= 10; n += 1) {
-        html += '<button type="button" class="cm-btn cm-numbtn" data-action="game-guess" data-n="' + n + '">' + n + "</button>";
+    if (wait > 0) {
+      html += '<div class="cm-gamelimit">✅ You already played ' + escapeHTML(gameTypeLabel(game.type)) + ' today.<br>Next play in <b>' + cooldownLabel(wait) + "</b>.</div>";
+    } else {
+      html += '<div class="cm-gamecontrols">';
+      if (game.type === "dice") {
+        html += '<button type="button" class="cm-btn primary" data-action="game-roll">' + (result ? "Roll again" : "Roll the die") + "</button>";
+      } else if (game.type === "coin") {
+        html += '<button type="button" class="cm-btn primary" data-action="game-coin" data-choice="heads">Heads</button>' +
+          '<button type="button" class="cm-btn primary" data-action="game-coin" data-choice="tails">Tails</button>';
+      } else if (game.type === "guess") {
+        for (var n = 1; n <= 10; n += 1) {
+          html += '<button type="button" class="cm-btn cm-numbtn" data-action="game-guess" data-n="' + n + '">' + n + "</button>";
+        }
+      } else if (game.type === "rps") {
+        html += '<button type="button" class="cm-btn primary" data-action="game-rps" data-choice="rock">✊ Rock</button>' +
+          '<button type="button" class="cm-btn primary" data-action="game-rps" data-choice="paper">✋ Paper</button>' +
+          '<button type="button" class="cm-btn primary" data-action="game-rps" data-choice="scissors">✌️ Scissors</button>';
+      } else if (game.type === "wheel") {
+        html += '<button type="button" class="cm-btn primary" data-action="game-wheel">Spin the wheel</button>';
+      } else if (game.type === "higher") {
+        html += '<button type="button" class="cm-btn primary" data-action="game-higher" data-dir="higher">Higher</button>' +
+          '<button type="button" class="cm-btn primary" data-action="game-higher" data-dir="lower">Lower</button>';
       }
-    } else if (game.type === "rps") {
-      html += '<button type="button" class="cm-btn primary" data-action="game-rps" data-choice="rock">✊ Rock</button>' +
-        '<button type="button" class="cm-btn primary" data-action="game-rps" data-choice="paper">✋ Paper</button>' +
-        '<button type="button" class="cm-btn primary" data-action="game-rps" data-choice="scissors">✌️ Scissors</button>';
-    } else if (game.type === "wheel") {
-      html += '<button type="button" class="cm-btn primary" data-action="game-wheel">Spin the wheel</button>';
-    } else if (game.type === "higher") {
-      html += '<button type="button" class="cm-btn primary" data-action="game-higher" data-dir="higher">Higher</button>' +
-        '<button type="button" class="cm-btn primary" data-action="game-higher" data-dir="lower">Lower</button>';
+      html += "</div>";
     }
-    html += "</div></div>";
+    html += "</div>";
     return html;
+  }
+
+  function dailyBonusHTML() {
+    var wait = bonusCooldownLeft();
+    return '<div class="cm-gamebonus">' +
+      '<div><span>Daily bonus</span><b>+' + DAILY_BONUS_POINTS + " points</b></div>" +
+      (wait > 0
+        ? '<span class="cm-muted">Next in ' + cooldownLabel(wait) + "</span>"
+        : '<button type="button" class="cm-btn primary" data-action="claim-bonus">Claim bonus</button>') +
+      "</div>";
   }
 
   function gamePageHTML() {
@@ -4509,7 +4575,7 @@
         left = (hours > 0 ? hours + "h " : "") + mins + "m left";
       }
     }
-    var statusLabel = game.status === "open" ? "Open" : (game.status === "finished" ? "Prize pool finished" : "Returned to admin");
+    var statusLabel = game.status === "open" ? "Open" : (game.status === "finished" ? "Ended" : "Returned to admin");
     return '<div class="cm-gamepage">' +
       '<div class="cm-gamehead">' +
         '<button type="button" class="cm-btn cm-gameback" data-action="close-game" aria-label="Back to games">←</button>' +
@@ -4523,10 +4589,12 @@
         '<div><span>Your points</span><b>' + gameScore() + '</b></div>' +
         '<div><span>Plays</span><b>' + (Number(game.plays) || 0) + '</b></div>' +
         (left ? '<div><span>Time left</span><b>' + left + "</b></div>" : "") +
-        (isAdmin() ? '<div><span>Your stake</span><b>' + escapeHTML(game.stake) + " HDO</b></div>" +
-          '<div><span>Pool left</span><b>' + escapeHTML(String(game.prizePool == null ? game.stake : game.prizePool)) + " HDO</b></div>" : "") +
+        (isAdmin() ? '<div><span>Stake per win</span><b>' + escapeHTML(game.stake) + " HDO</b></div>" +
+          '<div><span>Won so far</span><b>' + escapeHTML(String(Number(game.paid) || 0)) + " HDO</b></div>" : "") +
       "</div>" +
       '<p class="cm-gamerate">' + POINTS_PER_HDO + ' points = 1 HDO · ' + CASHOUT_POINTS + ' points = ' + CASHOUT_HDO + " HDO</p>" +
+      '<p class="cm-gamenote">Everyone can play this game. Each player can play ' + escapeHTML(gameTypeLabel(game.type)) + " once every 24 hours.</p>" +
+      dailyBonusHTML() +
       (isAdmin() ? '<div class="cm-button-row"><button type="button" class="cm-btn danger" data-action="delete-game" data-id="' + escapeHTML(game.id) + '">Delete game</button></div>' : "") +
       "</div>";
   }
@@ -5415,7 +5483,7 @@
     if (!state.cashouts) state.cashouts = [];
     expireGames();
     var pts = gameScore();
-    var html = '<div class="cm-card"><h3>Game Room</h3><p class="cm-muted">The admin creates games and stakes HDO. Tap a game to open its game page and play. Games close after 24 hours and any HDO left in the pool returns to the admin.</p></div>';
+    var html = '<div class="cm-card"><h3>Game Room</h3><p class="cm-muted">The admin creates a game for everyone in the room. Tap a game to open its game page and play. Games stay open for 24 hours, and each player can play each game type once every 24 hours.</p></div>';
     if (isAdmin() && state.games.length < 10) {
       html += '<div class="cm-card"><h3>Create game</h3>' +
         '<div class="cm-inline">' +
@@ -5427,13 +5495,13 @@
           "</select>" +
         "</div>" +
         '<div class="cm-inline">' +
-          '<input class="cm-input" data-role="gamestake" type="text" placeholder="Stake (HDO, admin only)" value="1">' +
+          '<input class="cm-input" data-role="gamestake" type="text" placeholder="Stake per win (HDO, admin only)" value="1">' +
           '<button type="button" class="cm-btn primary" data-action="create-game">Create</button>' +
         "</div>" +
-        '<p class="cm-muted">Games: ' + state.games.length + "/10 · each game runs for 24 hours. Only you see the stake and pool.</p>" +
+        '<p class="cm-muted">Games: ' + state.games.length + "/10 · each game runs for 24 hours. Each winner earns stake × 10 points. Only you see the stake and the HDO won.</p>" +
       "</div>";
     } else if (!isAdmin()) {
-      html += '<div class="cm-card"><p class="cm-muted">Only the admin creates games and sets the HDO stake. Tap any open game to play it on its game page.</p></div>';
+      html += '<div class="cm-card"><p class="cm-muted">Only the admin creates games and sets the HDO stake. Every player can play each open game once every 24 hours.</p></div>';
     } else {
       html += '<div class="cm-card"><p class="cm-muted">Game limit reached (10). Delete one to create another.</p></div>';
     }
@@ -5441,7 +5509,8 @@
     if (!state.games.length) html += '<p class="cm-muted">No games yet. The admin can create one above.</p>';
     state.games.forEach(function (g) {
       var status = g.status || "open";
-      var statusLabel = status === "open" ? "Open" : (status === "finished" ? "Prize pool finished" : "Returned to admin");
+      var statusLabel = status === "open" ? "Open" : (status === "finished" ? "Ended" : "Returned to admin");
+      var wait = gameCooldownLeft(g.type);
       var left = "";
       if (status === "open" && g.expiresAt) {
         var ms = Number(g.expiresAt) - Date.now();
@@ -5458,9 +5527,10 @@
           '<span class="cm-game-status ' + escapeHTML(status) + '">' + escapeHTML(statusLabel) + "</span></div>" +
         '<div class="cm-gamecard-meta">' +
           '<span>' + (Number(g.plays) || 0) + " plays</span>" +
+          (wait > 0 ? "<span>✅ Played · next in " + cooldownLabel(wait) + "</span>" : "<span>Ready to play</span>") +
           (isAdmin()
-            ? '<span>Stake: ' + escapeHTML(g.stake) + " HDO</span>" +
-              '<span>Pool: ' + escapeHTML(String(g.prizePool == null ? g.stake : g.prizePool)) + " HDO</span>"
+            ? '<span>Stake/win: ' + escapeHTML(g.stake) + " HDO</span>" +
+              '<span>Won so far: ' + escapeHTML(String(Number(g.paid) || 0)) + " HDO</span>"
             : '<span>' + POINTS_PER_HDO + " pts = 1 HDO</span>") +
         "</div>" +
         '<div class="cm-button-row">' +
@@ -5476,6 +5546,10 @@
       '<p class="cm-muted">' + CASHOUT_POINTS + " points converts to " + CASHOUT_HDO + " HDO. You need " + CASHOUT_POINTS + " points per request.</p>" +
       '<div class="cm-button-row"><button type="button" class="cm-btn primary" data-action="claim-hdo"' + (pts >= CASHOUT_POINTS ? "" : " disabled") + ">Convert " + CASHOUT_POINTS + " points to " + CASHOUT_HDO + " HDO</button></div>" +
       '<p class="cm-muted">The request is sent to the admin, who pays the HDO to your wallet from the game stake.</p></div>';
+
+    html += '<div class="cm-card"><h3>Daily bonus</h3>' +
+      '<p class="cm-muted">Claim ' + DAILY_BONUS_POINTS + " extra points once every 24 hours.</p>" +
+      dailyBonusHTML() + "</div>";
 
     var mine = (state.cashouts || []).filter(function (c) { return c.user === state.user.id; }).slice(-5).reverse();
     if (mine.length) {
@@ -5945,6 +6019,8 @@
       deleteGame(target.dataset.id);
     } else if (action === "claim-hdo") {
       claimHdo();
+    } else if (action === "claim-bonus") {
+      claimDailyBonus();
     } else if (action === "set-profile-picture") {
       setProfilePictureFromFile();
     } else if (action === "set-profile-nft") {

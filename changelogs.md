@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.16
+- Games are no longer consumed by the first player: an admin game stays open for the whole 24 hours, so every player can play it.
+- Each player can play each game type (dice, coin, guess, quiz, rock paper scissors, wheel, higher-or-lower) once every 24 hours.
+- Added a daily bonus: claim 20 points once every 24 hours on the Games tab and on each game page.
+- Admin view shows stake per win and total HDO won so far; the prize-pool mechanic was removed.
+
 ## 1.9.15
 - **Games are now real game pages.** Tapping a game opens its own page with live controls instead of an instant random result. The page shows “Game page hosted by <your Community Chat ID>” and has a **Copy game page** button.
 - **Four new games:** rock paper scissors, lucky wheel and higher-or-lower join dice, coin flip, number guess and quiz — seven types in total.
