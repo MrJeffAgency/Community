@@ -1,5 +1,5 @@
 /* Community Chat — web app */
-const VERSION = "1.1.13";
+const VERSION = "1.1.14";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
@@ -10,6 +10,33 @@ const TOPIC_PREFIX = "acode-community-v1-";
 const VERIFIED_TOPIC = TOPIC_PREFIX + "verified";
 const GAMES_TOPIC = TOPIC_PREFIX + "games";
 const GAME_LIFETIME_MS = 24 * 60 * 60 * 1000;
+const GAME_TYPES = ["dice", "coin", "guess", "quiz", "rps", "wheel", "higher"];
+const GAME_TYPE_LABELS = {
+  dice: "Dice roll",
+  coin: "Coin flip",
+  guess: "Number guess",
+  quiz: "Quiz question",
+  rps: "Rock paper scissors",
+  wheel: "Lucky wheel",
+  higher: "Higher or lower"
+};
+const POINTS_PER_HDO = 10;
+const CASHOUT_POINTS = 1000;
+const CASHOUT_HDO = 100;
+const QUIZ_BANK = [
+  { q: "Which planet is known as the Red Planet?", options: ["Venus", "Mars", "Jupiter", "Mercury"], answer: 1 },
+  { q: "What does HTML stand for?", options: ["Hyper Text Markup Language", "High Tech Modern Link", "Home Tool Markup Language", "Hyperlink Text Machine Language"], answer: 0 },
+  { q: "How many sides does a hexagon have?", options: ["5", "6", "7", "8"], answer: 1 },
+  { q: "Which language runs in a web browser?", options: ["Python", "Java", "JavaScript", "C++"], answer: 2 },
+  { q: "What is the capital of France?", options: ["Lagos", "Paris", "London", "Berlin"], answer: 1 },
+  { q: "What is 9 x 8?", options: ["64", "72", "81", "68"], answer: 1 },
+  { q: "Which gas do plants absorb from the air?", options: ["Oxygen", "Nitrogen", "Carbon dioxide", "Hydrogen"], answer: 2 },
+  { q: "Who wrote Romeo and Juliet?", options: ["Charles Dickens", "William Shakespeare", "Jane Austen", "Mark Twain"], answer: 1 },
+  { q: "What is the largest ocean on Earth?", options: ["Atlantic", "Indian", "Arctic", "Pacific"], answer: 3 },
+  { q: "In which year did World War II end?", options: ["1943", "1944", "1945", "1946"], answer: 2 },
+  { q: "What does CSS stand for?", options: ["Cascading Style Sheets", "Computer Style System", "Creative Style Source", "Coded Styling Sheets"], answer: 0 },
+  { q: "Which is the smallest prime number?", options: ["0", "1", "2", "3"], answer: 2 }
+];
 const TRANSLATE_LANGS = [
   { code: "en", name: "English" },
   { code: "fr", name: "French" },
@@ -111,7 +138,7 @@ const ROOMS = [
 ];
 
 let state = null;
-let ui = { tab: "chats", mode: "tabs", peer: null, status: "connecting", lastSync: 0, searchOpen: false, wallet: { data: null, loading: false, error: "", at: 0 } };
+let ui = { tab: "chats", mode: "tabs", peer: null, status: "connecting", lastSync: 0, searchOpen: false, wallet: { data: null, loading: false, error: "", at: 0 }, gameId: null, gameResult: null, gameRoll: 0, gameNumber: 0, gameCoin: "", gameGuess: 0, gameWheel: -1, gameQuiz: null };
 let running = true;
 let pollTimer = null;
 let pollInFlight = false;
@@ -318,11 +345,30 @@ function sanitizeAirdrop(value) {
     claimsUsed: usedClaims
   };
 }
+function cleanCashoutRecord(value) {
+  if (!value || typeof value !== "object") return null;
+  var user = normalizeId(value.user);
+  if (!user) return null;
+  var address = isAddress(value.address) ? value.address : "";
+  if (!address) return null;
+  var status = ["pending", "paid", "rejected"].indexOf(value.status) === -1 ? "pending" : value.status;
+  return {
+    id: String(value.id || uid()).slice(0, 80),
+    user: user,
+    points: Math.max(0, Math.round(Number(value.points) || CASHOUT_POINTS)),
+    hdo: Math.max(0, Number(value.hdo) || CASHOUT_HDO),
+    address: address,
+    status: status,
+    createdAt: Number(value.createdAt) || Date.now(),
+    paidAt: Number(value.paidAt) || 0,
+    tx: /^0x[0-9a-f]{64}$/i.test(String(value.tx || "")) ? String(value.tx).toLowerCase() : ""
+  };
+}
 function cleanGameRecord(value) {
   if (!value || typeof value !== "object") return null;
   var name = String(value.name || "").replace(/[\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
   if (!name) return null;
-  var type = ["dice", "coin", "guess", "quiz"].indexOf(value.type) === -1 ? "dice" : value.type;
+  var type = GAME_TYPES.indexOf(value.type) === -1 ? "dice" : value.type;
   var stake = String(value.stake == null ? "1" : value.stake).replace(/[^0-9.]/g, "").slice(0, 20) || "1";
   var created = Number(value.createdAt) || Date.now();
   var expires = Number(value.expiresAt) || (created + GAME_LIFETIME_MS);
@@ -530,6 +576,12 @@ function normalizeState(data) {
     if (g && g.name) games.push(g);
   });
   var gameScores = (input.gameScores && typeof input.gameScores === "object") ? input.gameScores : {};
+  var cashouts = [];
+  var cashoutsInput = Array.isArray(input.cashouts) ? input.cashouts : [];
+  cashoutsInput.slice(0, 100).forEach(function (value) {
+    var record = cleanCashoutRecord(value);
+    if (record) cashouts.push(record);
+  });
   var gameCursor = null;
   var gameCursorInput = input.gameCursor && typeof input.gameCursor === "object" ? input.gameCursor : null;
   if (gameCursorInput && (gameCursorInput.id || gameCursorInput.ts)) {
@@ -570,6 +622,7 @@ function normalizeState(data) {
     bots: bots,
     games: games,
     gameScores: gameScores,
+    cashouts: cashouts,
     gameCursor: gameCursor,
     welcome: input.welcome !== false
   };
@@ -2204,13 +2257,47 @@ function expireGames() {
   return changed;
 }
 function refreshGameUI() {
-  if (ui.mode === "tabs" && ui.tab === "games") render();
+  if ((ui.mode === "tabs" && ui.tab === "games") || (ui.mode === "game" && ui.gameId)) render();
 }
 function applyRemoteGame(env, silent) {
   if (!state || !env) return false;
   var action = String(env.action || "create");
   var fromAdmin = normalizeId(env.from) === DEV_ID;
   if (!state.games) state.games = [];
+  if (!state.cashouts) state.cashouts = [];
+
+  if (action === "cashout") {
+    var cash = cleanCashoutRecord({
+      id: env.cashoutId,
+      user: env.player,
+      points: env.points,
+      hdo: env.hdo,
+      address: env.address,
+      status: "pending",
+      createdAt: env.ts
+    });
+    if (!cash || findCashout(cash.id)) return false;
+    state.cashouts.push(cash);
+    if (!silent) { saveState(); refreshGameUI(); }
+    return true;
+  }
+
+  if (action === "cashout-paid" || action === "cashout-reject") {
+    if (!fromAdmin) return false;
+    var cashId = String(env.cashoutId || "").slice(0, 80);
+    var record = findCashout(cashId);
+    if (!record) return false;
+    record.status = action === "cashout-paid" ? "paid" : "rejected";
+    if (action === "cashout-paid") {
+      record.tx = /^0x[0-9a-f]{64}$/i.test(String(env.tx || "")) ? String(env.tx).toLowerCase() : record.tx;
+      record.paidAt = Number(env.ts) || Date.now();
+    } else if (record.user === state.user.id) {
+      if (!state.gameScores) state.gameScores = {};
+      state.gameScores[record.user] = (Number(state.gameScores[record.user]) || 0) + record.points;
+    }
+    if (!silent) { saveState(); refreshGameUI(); }
+    return true;
+  }
 
   if (action === "delete") {
     var deleteId = String(env.gameId || (env.game && env.game.id) || "").slice(0, 80);
@@ -2285,6 +2372,10 @@ function publishGameEvent(action, game, extra) {
     if (extra.player) env.player = extra.player;
     if (extra.win != null) env.win = !!extra.win;
     if (extra.points != null) env.points = Number(extra.points) || 0;
+    if (extra.cashoutId) env.cashoutId = extra.cashoutId;
+    if (extra.hdo != null) env.hdo = Number(extra.hdo) || 0;
+    if (extra.address) env.address = String(extra.address);
+    if (extra.tx) env.tx = String(extra.tx);
   }
   return publish(env, GAMES_TOPIC).then(function () { return true; }).catch(function () { return false; });
 }
@@ -2297,7 +2388,35 @@ function deleteGame(id) {
   publishGameEvent("delete", { id: id });
   render();
 }
-function playGame(id) {
+function findCashout(id) {
+  if (!state || !state.cashouts) return null;
+  var target = String(id || "");
+  for (var i = 0; i < state.cashouts.length; i += 1) {
+    if (state.cashouts[i] && state.cashouts[i].id === target) return state.cashouts[i];
+  }
+  return null;
+}
+function hdoChatToken() {
+  var chain = walletChainByKey("celo");
+  if (!chain) return null;
+  var tokens = chainTokens(chain);
+  for (var i = 0; i < tokens.length; i += 1) {
+    if (tokens[i].symbol === "HDO") return { chain: chain, token: tokens[i] };
+  }
+  return null;
+}
+function gameTypeLabel(type) { return GAME_TYPE_LABELS[type] || "Game"; }
+function gameTypeIcon(type) {
+  if (type === "dice") return "🎲";
+  if (type === "coin") return "🪙";
+  if (type === "guess") return "🔢";
+  if (type === "quiz") return "❓";
+  if (type === "rps") return "✊";
+  if (type === "wheel") return "🎡";
+  if (type === "higher") return "📈";
+  return "🎮";
+}
+function openGame(id) {
   if (!state || !state.games) return;
   var game = gameById(id);
   if (!game) return;
@@ -2308,37 +2427,274 @@ function playGame(id) {
     toast("This game expired. The remaining HDO went back to the admin.");
     return;
   }
+  ui.mode = "game";
+  ui.gameId = id;
+  ui.gameResult = null;
+  ui.gameRoll = 0;
+  ui.gameNumber = 0;
+  ui.gameGuess = 0;
+  ui.gameCoin = "";
+  ui.gameWheel = -1;
+  ui.gameQuiz = null;
+  render();
+}
+function closeGame() {
+  ui.mode = "tabs";
+  ui.tab = "games";
+  ui.gameId = null;
+  ui.gameResult = null;
+  render();
+}
+function gameScore() {
+  return state && state.gameScores ? (Number(state.gameScores[state.user.id]) || 0) : 0;
+}
+function finishGamePlay(game, win, detail) {
+  if (!state || !game) return;
+  if (win === null) {
+    ui.gameResult = { id: game.id, win: null, detail: detail || "Tie — try again." };
+    render();
+    return;
+  }
   game.plays = Math.max(0, Number(game.plays) || 0) + 1;
-  var win = false;
-  if (game.type === "dice") win = Math.floor(Math.random() * 6) + 1 >= 4;
-  else if (game.type === "coin") win = Math.random() < 0.5;
-  else if (game.type === "guess") win = Math.random() < 0.35;
-  else if (game.type === "quiz") win = Math.random() < 0.5;
   if (!state.gameScores) state.gameScores = {};
   if (!Array.isArray(game.players)) game.players = [];
   if (game.players.indexOf(state.user.id) === -1 && game.players.length < 100) game.players.push(state.user.id);
   var pts = 0;
   if (win) {
-    pts = Math.max(1, Math.round((parseFloat(game.stake) || 1) * 10));
-    state.gameScores[state.user.id] = (state.gameScores[state.user.id] || 0) + pts;
+    pts = Math.max(1, Math.round((parseFloat(game.stake) || 1) * POINTS_PER_HDO));
+    state.gameScores[state.user.id] = (Number(state.gameScores[state.user.id]) || 0) + pts;
     var stakeNum = Math.max(0, parseFloat(game.stake) || 0);
     game.prizePool = Math.max(0, (Number(game.prizePool) || 0) - stakeNum);
     game.paid = Math.max(0, Number(game.paid) || 0) + stakeNum;
     game.lastWinner = state.user.id;
     if (game.prizePool <= 0) game.status = "finished";
-    toast("You won " + pts + " points!" + (game.status === "finished" ? " The prize pool is finished." : ""));
-  } else {
-    toast("You lost. Try again!");
   }
+  ui.gameResult = { id: game.id, win: win, detail: detail || (win ? "You won!" : "You lost."), pts: pts };
   saveState();
   publishGameEvent("play", game, { gameId: game.id, player: state.user.id, win: win, points: pts });
   render();
 }
+function dieFace(value) {
+  var faces = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
+  return faces[Math.max(1, Math.min(6, Number(value) || 1)) - 1];
+}
+function gameRoll() {
+  var game = gameById(ui.gameId);
+  if (!game) return;
+  var roll = Math.floor(Math.random() * 6) + 1;
+  ui.gameRoll = roll;
+  finishGamePlay(game, roll >= 4, "You rolled " + roll + ". " + (roll >= 4 ? "4 or higher wins!" : "You needed 4 or higher."));
+}
+function gameCoin(choice) {
+  var game = gameById(ui.gameId);
+  if (!game) return;
+  var flip = Math.random() < 0.5 ? "heads" : "tails";
+  ui.gameCoin = flip;
+  finishGamePlay(game, choice === flip, "The coin landed on " + flip + ". You picked " + choice + ".");
+}
+function gameGuess(value) {
+  var game = gameById(ui.gameId);
+  if (!game) return;
+  var number = Math.floor(Math.random() * 10) + 1;
+  var guess = Number(value) || 0;
+  var win = Math.abs(guess - number) <= 1;
+  ui.gameGuess = number;
+  finishGamePlay(game, win, "The number was " + number + ". You picked " + guess + (win ? " — close enough!" : "."));
+}
+function gameQuiz(index) {
+  var game = gameById(ui.gameId);
+  if (!game) return;
+  var quiz = ui.gameQuiz && ui.gameQuiz.id === game.id ? ui.gameQuiz : null;
+  if (!quiz) return;
+  var question = QUIZ_BANK[quiz.index];
+  if (!question) return;
+  var win = Number(index) === question.answer;
+  finishGamePlay(game, win, (win ? "Correct!" : "Wrong.") + " The answer was " + question.options[question.answer] + ".");
+}
+function gameRps(choice) {
+  var game = gameById(ui.gameId);
+  if (!game) return;
+  var options = ["rock", "paper", "scissors"];
+  var cpu = options[Math.floor(Math.random() * 3)];
+  if (choice === cpu) {
+    ui.gameResult = { id: game.id, win: null, detail: "You both picked " + choice + ". Tie — try again." };
+    render();
+    return;
+  }
+  var win = (choice === "rock" && cpu === "scissors") || (choice === "paper" && cpu === "rock") || (choice === "scissors" && cpu === "paper");
+  finishGamePlay(game, win, "You: " + choice + " · CPU: " + cpu + ". " + (win ? "You win!" : "CPU wins."));
+}
+function gameWheel() {
+  var game = gameById(ui.gameId);
+  if (!game) return;
+  var segments = ["WIN", "LOSE", "WIN", "LOSE", "WIN", "WIN", "LOSE", "WIN"];
+  var index = Math.floor(Math.random() * segments.length);
+  var win = segments[index] === "WIN";
+  ui.gameWheel = index;
+  finishGamePlay(game, win, "The wheel landed on segment " + (index + 1) + ": " + segments[index] + ".");
+}
+function gameHigher(direction) {
+  var game = gameById(ui.gameId);
+  if (!game) return;
+  var current = Number(ui.gameNumber) || (Math.floor(Math.random() * 11) + 2);
+  var next = Math.floor(Math.random() * 11) + 2;
+  var win = next !== current && ((direction === "higher" && next > current) || (direction === "lower" && next < current));
+  ui.gameNumber = next;
+  finishGamePlay(game, win, "It was " + current + ", then " + next + ". You picked " + direction + ".");
+}
+function gameStageHTML(game) {
+  if (game.status !== "open") {
+    return '<div class="cm-gameclosed">' + (game.status === "finished" ? "🏁 Prize pool finished" : "⏰ Returned to admin") + "</div>";
+  }
+  var result = ui.gameResult && ui.gameResult.id === game.id ? ui.gameResult : null;
+  var html = '<div class="cm-gamestage">';
+  if (game.type === "dice") {
+    html += '<div class="cm-diceface">' + dieFace(result ? (ui.gameRoll || 1) : 0) + "</div>";
+  } else if (game.type === "coin") {
+    html += '<div class="cm-coinface">🪙</div>' + (ui.gameCoin ? '<p class="cm-muted">Last flip: ' + ui.gameCoin + "</p>" : "");
+  } else if (game.type === "guess") {
+    html += '<div class="cm-gamebig">' + (ui.gameGuess || "?") + "</div>";
+  } else if (game.type === "quiz") {
+    if (!ui.gameQuiz || ui.gameQuiz.id !== game.id || result) ui.gameQuiz = { id: game.id, index: Math.floor(Math.random() * QUIZ_BANK.length) };
+    var quiz = QUIZ_BANK[ui.gameQuiz.index];
+    html += '<div class="cm-quizq">' + escapeHTML(quiz.q) + "</div>";
+    quiz.options.forEach(function (option, i) {
+      html += '<button type="button" class="cm-btn cm-quizoption" data-action="game-quiz" data-i="' + i + '">' + escapeHTML(option) + "</button>";
+    });
+  } else if (game.type === "rps") {
+    html += '<div class="cm-gamebig">✊✋✌️</div>';
+  } else if (game.type === "wheel") {
+    html += '<div class="cm-wheel">' + ["🎁", "💨", "🎁", "💨", "🎁", "🎁", "💨", "🎁"].map(function (s, i) {
+      return '<span class="' + (ui.gameWheel === i ? "active" : "") + '">' + s + "</span>";
+    }).join("") + "</div>";
+  } else if (game.type === "higher") {
+    if (!ui.gameNumber) ui.gameNumber = Math.floor(Math.random() * 11) + 2;
+    html += '<div class="cm-gamebig">' + ui.gameNumber + '</div><p class="cm-muted">Will the next number be higher or lower?</p>';
+  }
+  if (result) {
+    html += '<div class="cm-gameresult ' + (result.win === true ? "win" : result.win === false ? "lose" : "tie") + '">' +
+      escapeHTML(result.detail || "") + (result.pts ? "<b>+" + result.pts + " points</b>" : "") + "</div>";
+  }
+  html += '<div class="cm-gamecontrols">';
+  if (game.type === "dice") html += '<button type="button" class="cm-btn primary" data-action="game-roll">' + (result ? "Roll again" : "Roll the die") + "</button>";
+  else if (game.type === "coin") html += '<button type="button" class="cm-btn primary" data-action="game-coin" data-choice="heads">Heads</button><button type="button" class="cm-btn primary" data-action="game-coin" data-choice="tails">Tails</button>';
+  else if (game.type === "guess") {
+    for (var n = 1; n <= 10; n += 1) html += '<button type="button" class="cm-btn cm-numbtn" data-action="game-guess" data-n="' + n + '">' + n + "</button>";
+  } else if (game.type === "rps") {
+    html += '<button type="button" class="cm-btn primary" data-action="game-rps" data-choice="rock">✊ Rock</button><button type="button" class="cm-btn primary" data-action="game-rps" data-choice="paper">✋ Paper</button><button type="button" class="cm-btn primary" data-action="game-rps" data-choice="scissors">✌️ Scissors</button>';
+  } else if (game.type === "wheel") html += '<button type="button" class="cm-btn primary" data-action="game-wheel">Spin the wheel</button>';
+  else if (game.type === "higher") {
+    html += '<button type="button" class="cm-btn primary" data-action="game-higher" data-dir="higher">Higher</button><button type="button" class="cm-btn primary" data-action="game-higher" data-dir="lower">Lower</button>';
+  }
+  html += "</div></div>";
+  return html;
+}
+function gamePageHTML() {
+  var game = gameById(ui.gameId);
+  if (!game) return '<div class="cm-card"><p class="cm-muted">This game was removed.</p><button type="button" class="cm-btn" data-action="close-game">Back to games</button></div>';
+  expireGames();
+  var left = "";
+  if (game.status === "open" && game.expiresAt) {
+    var ms = Number(game.expiresAt) - Date.now();
+    if (ms > 0) {
+      var hours = Math.floor(ms / 3600000);
+      var mins = Math.floor((ms % 3600000) / 60000);
+      left = (hours > 0 ? hours + "h " : "") + mins + "m left";
+    }
+  }
+  var statusLabel = game.status === "open" ? "Open" : (game.status === "finished" ? "Prize pool finished" : "Returned to admin");
+  return '<div class="cm-gamepage">' +
+    '<div class="cm-gamehead"><button type="button" class="cm-btn cm-gameback" data-action="close-game" aria-label="Back to games">←</button>' +
+      '<div class="cm-gameheading"><h2>' + escapeHTML(game.name) + '</h2><span>' + escapeHTML(gameTypeLabel(game.type)) + '</span></div>' +
+      '<span class="cm-gamebadge ' + escapeHTML(game.status) + '">' + escapeHTML(statusLabel) + "</span></div>" +
+    '<div class="cm-gamehost">🎮 Game page hosted by <b>' + escapeHTML(state.user.id) + '</b>' +
+      '<button type="button" class="cm-chip" data-action="copy-game-link" data-id="' + escapeHTML(game.id) + '">Copy game page</button></div>' +
+    '<div class="cm-gamecard">' + gameStageHTML(game) + "</div>" +
+    '<div class="cm-gameinfo"><div><span>Your points</span><b>' + gameScore() + "</b></div>" +
+      '<div><span>Plays</span><b>' + (Number(game.plays) || 0) + "</b></div>" +
+      (left ? "<div><span>Time left</span><b>" + left + "</b></div>" : "") +
+      (isAdmin() ? '<div><span>Your stake</span><b>' + escapeHTML(game.stake) + " HDO</b></div>" +
+        '<div><span>Pool left</span><b>' + escapeHTML(String(game.prizePool == null ? game.stake : game.prizePool)) + " HDO</b></div>" : "") +
+    "</div>" +
+    '<p class="cm-gamerate">' + POINTS_PER_HDO + " points = 1 HDO · " + CASHOUT_POINTS + " points = " + CASHOUT_HDO + " HDO</p>" +
+    (isAdmin() ? '<div class="cm-btn-row"><button type="button" class="cm-btn danger" data-action="delete-game" data-id="' + escapeHTML(game.id) + '">Delete game</button></div>' : "") +
+    "</div>";
+}
+function requestCashout() {
+  if (!state) return;
+  var pts = gameScore();
+  if (pts < CASHOUT_POINTS) { toast("You need " + CASHOUT_POINTS + " points to convert. You have " + pts + "."); return; }
+  var address = state.wallet && isAddress(state.wallet.address) ? state.wallet.address : "";
+  if (!address) { toast("Create a wallet first so the HDO has somewhere to go"); return; }
+  var record = cleanCashoutRecord({
+    id: uid(), user: state.user.id, points: CASHOUT_POINTS, hdo: CASHOUT_HDO,
+    address: address, status: "pending", createdAt: Date.now()
+  });
+  if (!record) { toast("Could not create the request"); return; }
+  if (!state.cashouts) state.cashouts = [];
+  if (!state.gameScores) state.gameScores = {};
+  state.gameScores[state.user.id] = pts - CASHOUT_POINTS;
+  state.cashouts.push(record);
+  saveState();
+  render();
+  toast("Request sent: " + CASHOUT_HDO + " HDO to " + address.slice(0, 8) + "… The admin will approve it.", 6000);
+  publishGameEvent("cashout", null, {
+    cashoutId: record.id, player: record.user, points: record.points, hdo: record.hdo, address: record.address
+  }).then(function (ok) {
+    if (!ok) toast("The request is saved on this device but could not reach the admin. Try again when online.", 6000);
+  });
+}
+async function payCashout(id) {
+  if (!isAdmin()) { toast("Only the admin can pay HDO"); return; }
+  var record = findCashout(id);
+  if (!record || record.status !== "pending") return;
+  var pair = hdoChatToken();
+  if (!pair) { toast("HDO is not available on this device"); return; }
+  var amountRaw;
+  try { amountRaw = parseUnits(String(record.hdo), pair.token.decimals); } catch (e) { toast("Invalid HDO amount"); return; }
+  toast("Sending " + record.hdo + " HDO to " + record.address.slice(0, 8) + "…", 8000);
+  try {
+    var result = await sendTokenOnChain({
+      chainKey: "celo", token: pair.token, to: record.address, amountRaw: amountRaw, amountText: String(record.hdo)
+    });
+    record.status = "paid";
+    record.tx = result.tx;
+    record.paidAt = Date.now();
+    saveState();
+    publishGameEvent("cashout-paid", null, { cashoutId: record.id, tx: result.tx });
+    render();
+    toast("Paid " + record.hdo + " HDO · " + result.tx.slice(0, 10) + "…", 6000);
+  } catch (error) {
+    toast("HDO payment failed: " + (error && error.message ? error.message : String(error)), 7000);
+  }
+}
+function rejectCashout(id) {
+  if (!isAdmin()) return;
+  var record = findCashout(id);
+  if (!record || record.status !== "pending") return;
+  record.status = "rejected";
+  if (record.user === state.user.id) {
+    if (!state.gameScores) state.gameScores = {};
+    state.gameScores[record.user] = (Number(state.gameScores[record.user]) || 0) + record.points;
+  }
+  saveState();
+  publishGameEvent("cashout-reject", null, { cashoutId: record.id, player: record.user, points: record.points });
+  render();
+  toast("Request rejected and points returned to the player.");
+}
 function claimHdo() {
   if (!state) return;
-  var pts = state.gameScores && state.gameScores[state.user.id] ? state.gameScores[state.user.id] : 0;
+  var pts = gameScore();
   if (pts <= 0) { toast("No points to claim"); return; }
-  toast("You have " + pts + " points. The admin pays HDO from the stake pool. Use Wallet to send HDO to a winner.", 5000);
+  if (pts >= CASHOUT_POINTS) { requestCashout(); return; }
+  toast("You have " + pts + " points. Reach " + CASHOUT_POINTS + " points to convert them to " + CASHOUT_HDO + " HDO.", 5000);
+}
+function copyGameLink(id) {
+  if (!state) return;
+  var game = gameById(id);
+  var text = "Community Chat game page\nHost: " + state.user.id + "\nGame: " + (game ? game.name : "Game") +
+    "\nOpen Community Chat and tap Games, then " + (game ? game.name : "the game") + " to play.";
+  copyText(text).then(function (ok) { toast(ok ? "Game page details copied" : "Could not copy the game page"); });
 }
 function applySearch() {
   var input = document.getElementById("searchInput");
@@ -2376,7 +2732,12 @@ function render() {
   if (!$root) return;
   $root.setAttribute("data-wallpaper", chatWallpaper());
   if (ui.mode === "thread") renderThread();
+  else if (ui.mode === "game") renderGamePage();
   else renderTabs();
+}
+function renderGamePage() {
+  $root.innerHTML = '<div class="cm-gamewrap">' + gamePageHTML() + "</div>";
+  bindActions();
 }
 function renderStatus() { /* status is shown in the Me tab */ }
 function renderTabs() {
@@ -2467,17 +2828,21 @@ function renderPeople() {
 function renderGames() {
   if (!state.games) state.games = [];
   if (!state.gameScores) state.gameScores = {};
+  if (!state.cashouts) state.cashouts = [];
   expireGames();
-  var html = '<div class="cm-card"><h3>Game Room</h3><p class="cm-muted">The admin creates games and stakes HDO. Anyone in the room can play. Games close after 24 hours and any HDO left in the pool returns to the admin.</p></div>';
+  var pts = gameScore();
+  var html = '<div class="cm-card"><h3>Game Room</h3><p class="cm-muted">The admin creates games and stakes HDO. Tap a game to open its game page and play. Games close after 24 hours and any HDO left in the pool returns to the admin.</p></div>';
   if (isAdmin() && state.games.length < 10) {
     html += '<div class="cm-card"><h3>Create game</h3>' +
-      '<div class="cm-inline"><input class="cm-input" id="gameName" placeholder="Game name" maxlength="40"><select class="cm-input" id="gameType"><option value="dice">Dice roll</option><option value="coin">Coin flip</option><option value="guess">Number guess</option><option value="quiz">Quiz question</option></select></div>' +
-      '<div class="cm-inline"><input class="cm-input" id="gameStake" placeholder="Stake (HDO)" value="1"><button class="cm-btn primary" data-action="create-game">Create</button></div>' +
-      '<p class="cm-muted">Games created: ' + state.games.length + '/10 · each game runs for 24 hours</p></div>';
+      '<div class="cm-inline"><input class="cm-input" id="gameName" placeholder="Game name" maxlength="40"><select class="cm-input" id="gameType">' +
+        GAME_TYPES.map(function (type) { return '<option value="' + type + '">' + escapeHTML(GAME_TYPE_LABELS[type]) + "</option>"; }).join("") +
+      "</select></div>" +
+      '<div class="cm-inline"><input class="cm-input" id="gameStake" placeholder="Stake (HDO, admin only)" value="1"><button class="cm-btn primary" data-action="create-game">Create</button></div>' +
+      '<p class="cm-muted">Games: ' + state.games.length + '/10 · each game runs for 24 hours. Only you see the stake and pool.</p></div>';
   } else if (!isAdmin()) {
-    html += '<div class="cm-card"><p class="cm-muted">Only the admin can create or delete games. Join the room, wait for the admin to post a game, then tap Play.</p></div>';
+    html += '<div class="cm-card"><p class="cm-muted">Only the admin creates games and sets the HDO stake. Tap any open game to play it on its game page.</p></div>';
   } else {
-    html += '<div class="cm-card"><p class="cm-muted">You have reached the 10-game limit. Delete one to create another.</p></div>';
+    html += '<div class="cm-card"><p class="cm-muted">Game limit reached (10). Delete one to create another.</p></div>';
   }
   html += '<div class="cm-card"><h3>Games</h3>';
   if (!state.games.length) html += '<p class="cm-muted">No games yet. The admin can create one above.</p>';
@@ -2493,22 +2858,57 @@ function renderGames() {
         left = " · " + (hours > 0 ? hours + "h " : "") + mins + "m left";
       }
     }
-    html += '<div class="cm-row" style="flex-direction:column;align-items:stretch;gap:6px">' +
-      '<div><b>' + escapeHTML(g.name) + '</b> <span class="cm-muted">(' + escapeHTML(g.type) + ')</span> · <span class="cm-game-status ' + escapeHTML(status) + '">' + escapeHTML(statusLabel) + '</span></div>' +
-      '<div class="cm-muted">Stake: ' + escapeHTML(g.stake) + ' HDO · pool: ' + escapeHTML(String(g.prizePool == null ? g.stake : g.prizePool)) + ' HDO · plays: ' + g.plays + left + '</div>' +
-      '<div class="cm-muted">By ' + escapeHTML(g.creator || "admin") + (g.lastWinner ? " · last winner: " + escapeHTML(g.lastWinner) : "") + '</div>' +
-      '<div class="cm-btn-row"><button class="cm-btn primary" data-action="play-game" data-id="' + escapeHTML(g.id) + '"' + (status === "open" ? "" : " disabled") + '>Play</button>' +
-      (isAdmin() ? '<button class="cm-btn" data-action="delete-game" data-id="' + escapeHTML(g.id) + '">Delete</button>' : '') + '</div>' +
-      '</div>';
+    html += '<div class="cm-gamecard-row">' +
+      '<div class="cm-gamecard-top"><span class="cm-gametype-icon">' + gameTypeIcon(g.type) + "</span>" +
+        '<div class="cm-gamecard-name">' + escapeHTML(g.name) + '<span class="cm-muted">' + escapeHTML(gameTypeLabel(g.type)) + left + "</span></div>" +
+        '<span class="cm-game-status ' + escapeHTML(status) + '">' + escapeHTML(statusLabel) + "</span></div>" +
+      '<div class="cm-gamecard-meta"><span>' + (Number(g.plays) || 0) + " plays</span>" +
+        (isAdmin()
+          ? "<span>Stake: " + escapeHTML(g.stake) + " HDO</span><span>Pool: " + escapeHTML(String(g.prizePool == null ? g.stake : g.prizePool)) + " HDO</span>"
+          : "<span>" + POINTS_PER_HDO + " pts = 1 HDO</span>") +
+      "</div>" +
+      '<div class="cm-btn-row"><button class="cm-btn primary" data-action="play-game" data-id="' + escapeHTML(g.id) + '"' + (status === "open" ? "" : " disabled") + '>Open game</button>' +
+      (isAdmin() ? '<button class="cm-btn danger" data-action="delete-game" data-id="' + escapeHTML(g.id) + '">Delete</button>' : "") + "</div>" +
+      "</div>";
   });
-  html += '</div>';
+  html += "</div>";
+
+  html += '<div class="cm-card"><h3>Your points</h3>' +
+    '<div class="cm-pointsline"><b>' + pts + '</b> points<span>' + POINTS_PER_HDO + " points = 1 HDO</span></div>" +
+    '<p class="cm-muted">' + CASHOUT_POINTS + " points converts to " + CASHOUT_HDO + " HDO. You need " + CASHOUT_POINTS + " points per request.</p>" +
+    '<div class="cm-btn-row"><button class="cm-btn primary" data-action="claim-hdo"' + (pts >= CASHOUT_POINTS ? "" : " disabled") + ">Convert " + CASHOUT_POINTS + " points to " + CASHOUT_HDO + " HDO</button></div>" +
+    '<p class="cm-muted">The request is sent to the admin, who pays the HDO to your wallet from the game stake.</p></div>';
+
+  var mine = (state.cashouts || []).filter(function (c) { return c.user === state.user.id; }).slice(-5).reverse();
+  if (mine.length) {
+    html += '<div class="cm-card"><h3>Your HDO requests</h3>';
+    mine.forEach(function (c) {
+      html += '<div class="cm-cashoutrow"><div><b>' + c.hdo + ' HDO</b><span class="cm-muted">' + c.points + ' points · ' + escapeHTML(c.status) + "</span></div>" +
+        (c.tx ? '<button class="cm-token-link" data-action="open-tx" data-url="' + escapeHTML("https://celoscan.io/tx/" + c.tx) + '">Transaction ↗</button>' : "") + "</div>";
+    });
+    html += "</div>";
+  }
+
+  if (isAdmin()) {
+    var pending = (state.cashouts || []).filter(function (c) { return c.status === "pending"; });
+    html += '<div class="cm-card"><h3>HDO payouts (admin)</h3><p class="cm-muted">Only you see this. Approving sends real HDO on Celo from this wallet to the player.</p>';
+    if (!pending.length) html += '<p class="cm-muted">No pending requests.</p>';
+    pending.forEach(function (c) {
+      html += '<div class="cm-cashoutrow"><div><b>' + escapeHTML(c.user) + "</b>" +
+        '<span class="cm-muted">' + c.hdo + " HDO · " + c.points + " points · " + escapeHTML(c.address.slice(0, 10)) + "…</span></div>" +
+        '<div class="cm-btn-row"><button class="cm-btn primary" data-action="pay-cashout" data-id="' + escapeHTML(c.id) + '">Pay HDO</button>' +
+        '<button class="cm-btn" data-action="reject-cashout" data-id="' + escapeHTML(c.id) + '">Reject</button></div></div>';
+    });
+    html += "</div>";
+  }
+
   var scores = Object.keys(state.gameScores).map(function (k) { return { id: k, pts: state.gameScores[k] }; }).sort(function (a, b) { return b.pts - a.pts; });
   html += '<div class="cm-card"><h3>Leaderboard</h3>';
   if (!scores.length) html += '<p class="cm-muted">No scores yet.</p>';
   scores.slice(0, 10).forEach(function (s, i) {
     html += '<div class="cm-row"><span class="cm-avatar cm-avatar-sm">' + (i + 1) + '</span><div style="flex:1"><div class="cm-rowname">' + escapeHTML(s.id) + '</div><div class="cm-rowsub">' + s.pts + ' pts</div></div></div>';
   });
-  html += '<div class="cm-btn-row"><button class="cm-btn" data-action="claim-hdo">Claim HDO reward</button></div></div>';
+  html += "</div>";
   return html;
 }
 function renderMe() {
@@ -2683,7 +3083,18 @@ function bindActions() {
         toast("Relay updated");
       }
       else if (action === "create-game") createGame();
-      else if (action === "play-game") playGame(node.dataset.id);
+      else if (action === "play-game") openGame(node.dataset.id);
+      else if (action === "close-game") closeGame();
+      else if (action === "game-roll") gameRoll();
+      else if (action === "game-coin") gameCoin(node.dataset.choice);
+      else if (action === "game-guess") gameGuess(node.dataset.n);
+      else if (action === "game-quiz") gameQuiz(node.dataset.i);
+      else if (action === "game-rps") gameRps(node.dataset.choice);
+      else if (action === "game-wheel") gameWheel();
+      else if (action === "game-higher") gameHigher(node.dataset.dir);
+      else if (action === "copy-game-link") copyGameLink(node.dataset.id);
+      else if (action === "pay-cashout") payCashout(node.dataset.id);
+      else if (action === "reject-cashout") rejectCashout(node.dataset.id);
       else if (action === "delete-game") deleteGame(node.dataset.id);
       else if (action === "claim-hdo") claimHdo();
       else if (action === "back") closeThread();

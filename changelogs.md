@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.15
+- **Games are now real game pages.** Tapping a game opens its own page with live controls instead of an instant random result. The page shows “Game page hosted by <your Community Chat ID>” and has a **Copy game page** button.
+- **Four new games:** rock paper scissors, lucky wheel and higher-or-lower join dice, coin flip, number guess and quiz — seven types in total.
+- **Points convert to HDO.** 1000 points = 100 HDO. Converting deducts the points and sends a payout request with your wallet address to the admin. The admin taps **Pay HDO** and the app sends real HDO on Celo to your wallet. Rejecting a request returns your points.
+- **Stake and pool are admin-only.** Non-admin players see status, plays, time left and their own points, but never the admin's HDO stake or the remaining pool.
+- **Game Room redesign:** game cards with type icons, a points card, your HDO requests and an admin payout queue.
+
 ## 1.9.14
 - Rewrote the plugin README so it matches the app: removed the old Community Bot API and "connect an existing bot" instructions, fixed the tabs and wallet networks, and documented games and message translation.
 - BotFather no longer tells you to run a token in a terminal. Bots are local to the phone and reply with the commands you set.

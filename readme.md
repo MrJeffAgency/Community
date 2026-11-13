@@ -72,13 +72,15 @@ Tap a room chip in the **Chats** tab, or tap the room name in the top bar to ope
 
 The **Games** tab is a small game room shared by everyone using Community Chat. It is separate from the 🎮 Game Room chat.
 
-- **Only the admin creates games.** The admin is profile `CM-6S29-CA2X`, or any device that unlocked admin mode with the code `COMMUNITY-ADMIN` in **Me → Admin**. Everyone else sees the game list and a **Play** button.
-- **Up to 10 games** can exist at once. The admin enters a name, picks a type (dice roll, coin flip, number guess or quiz question) and sets a stake in HDO.
-- **The admin stakes HDO into a prize pool.** The pool starts at the stake amount. The stake and pool are game state inside the app, not tokens locked in a smart contract.
-- **Anyone can play.** Each play can win points (stake × 10) and reduces the remaining pool by the stake. A win sets the last winner; when the pool reaches 0 the game is marked **Prize pool finished**.
+- **Only the admin creates games.** The admin is profile `CM-6S29-CA2X`, or any device that unlocked admin mode with the code `COMMUNITY-ADMIN` in **Me → Admin**. Everyone else sees the game list and an **Open game** button.
+- **Up to 10 games** can exist at once. The admin enters a name, picks a type (dice roll, coin flip, number guess, quiz question, rock paper scissors, lucky wheel or higher-or-lower) and sets a stake in HDO.
+- **Each game has its own game page.** Tapping a game opens a full game screen with real interactive controls: roll a die, call a coin, pick a number, answer a quiz, choose rock/paper/scissors, spin the wheel or guess higher/lower. The page shows “Game page hosted by <your Community Chat ID>” and a **Copy game page** button.
+- **The admin stakes HDO into a prize pool.** The pool starts at the stake amount. The stake and pool are game state inside the app, not tokens locked in a smart contract. **Only the admin sees the stake and the pool**; everyone else sees plays, status, time left and their own points.
+- **Anyone can play.** Each win awards points (stake × 10) and reduces the remaining pool by the stake. A win sets the last winner; when the pool reaches 0 the game is marked **Prize pool finished**.
 - **Games last 24 hours.** After 24 hours a game is marked **Returned to admin**, and whatever HDO is left in the pool is shown as returned to the admin.
-- **Games sync through the relay.** Create, update and delete events are accepted only from the admin profile. Play results come from the player who played. Everyone on 1.9.13 or newer sees the same games, pool, plays and winner, even after restarting the app.
-- **HDO payout is manual.** The app tracks the pool and points, but it does not move HDO on-chain automatically. **Claim HDO reward** shows your points and reminds you that the admin pays winners from the stake pool using the **Wallet** tab.
+- **Games sync through the relay.** Create, update and delete events are accepted only from the admin profile. Play results come from the player who played. Everyone on 1.9.15 or newer sees the same games, plays and winner, even after restarting the app.
+- **Points convert to HDO.** 10 points = 1 HDO. On the Games tab, **Convert 1000 points to 100 HDO** deducts the points and creates a payout request for the admin, including your wallet address.
+- **HDO payout is admin-approved.** The admin sees the request in **HDO payouts (admin)** and taps **Pay HDO**. The app then sends real HDO on Celo from the admin wallet on this phone to the player's wallet. The admin device must hold enough HDO and CELO for gas. Rejecting a request returns the points to the player.
 - **Only the admin can delete games**, and deleting a game removes it for everyone.
 
 ## Message translation
@@ -182,7 +184,7 @@ This section is for users and store reviewers who want to verify what the plugin
   - `https://celoscan.io` and `https://bscscan.com` — only opened when you tap a transaction link.
 - **Wallet safety:** the private key is generated on the phone with `crypto.getRandomValues`. It is never sent to the relay, to friends, to Lucky AI or to any server. Transfers are signed locally; only the signed transaction is broadcast to the chosen chain. Losing the phone without a backup means losing the funds.
 - **Encryption:** rooms use AES-256-GCM with a PBKDF2 key from the room code. Direct chats use ECDH P-256 plus AES-256-GCM. If WebCrypto is unavailable, sending is blocked rather than falling back to plaintext.
-- **Games:** game records are published to a separate relay topic so every player sees the same list. Game create, update and delete events are accepted only from the admin profile; play results are accepted from the player.
+- **Games:** game records are published to a separate relay topic so every player sees the same list. Game create, update and delete events are accepted only from the admin profile; play results are accepted from the player. Cashout requests travel on the same topic and include the player ID, points, HDO amount and wallet address; they are plaintext so the admin device can pay them. Stake and pool values are included in game records for the admin's device but are hidden from the non-admin interface.
 - **Airdrops:** the temporary claim key is stored only inside the encrypted message payload. It is never posted in plaintext, and the on-chain funding transaction is public.
 - **Backups:** exported backups are encrypted with PBKDF2 + AES-256-GCM. A plain backup option exists and is clearly marked unsafe.
 - **Source:** the complete source is published at [MrJeffAgency/Community](https://github.com/MrJeffAgency/Community/tree/main), and the installable zip can be rebuilt from that source.
