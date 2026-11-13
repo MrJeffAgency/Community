@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.9.17
+- Chat background can now be a custom image. Choose it in **Me → Chat background image**; it stays on this phone and applies to your chats.
+
 ## 1.9.16
 - Games are no longer consumed by the first player: an admin game stays open for the whole 24 hours, so every player can play it.
 - Each player can play each game type (dice, coin, guess, quiz, rock paper scissors, wheel, higher-or-lower) once every 24 hours.

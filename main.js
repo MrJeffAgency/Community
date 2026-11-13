@@ -21,7 +21,7 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.9.16";
+  var VERSION = "1.9.17";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -1949,7 +1949,13 @@
         notify: settingsInput.notify !== false,
         hdoToken: isAddress(settingsInput.hdoToken) ? settingsInput.hdoToken : "",
         devMode: settingsInput.devMode === true,
-        chatWallpaper: ["pattern", "sky", "mint", "sunset", "night", "paris", "lion", "community", "unicorn", "plug"].indexOf(settingsInput.chatWallpaper) === -1 ? "pattern" : settingsInput.chatWallpaper,
+        chatWallpaper: ["pattern", "sky", "mint", "sunset", "night", "paris", "lion", "community", "unicorn", "plug", "image"].indexOf(settingsInput.chatWallpaper) === -1 ? "pattern" : settingsInput.chatWallpaper,
+        chatWallpaperImage: (function (v) {
+          v = String(v == null ? "" : v).trim();
+          if (!v || v.length > MAX_IMAGE_CHARS) return "";
+          if (/^data:image\//i.test(v) || /^https?:\/\//i.test(v)) return v;
+          return "";
+        })(settingsInput.chatWallpaperImage),
         translateTo: translateLangCode(settingsInput.translateTo)
       },
       contacts: contacts,
@@ -4087,22 +4093,82 @@
 
     applySearchFilter();
     updateComposer();
+    applyWallpaperImage();
+  }
+
+  function applyWallpaperImage() {
+    if (!$root) return;
+    var img = state && state.settings ? (state.settings.chatWallpaperImage || "") : "";
+    var useImage = chatWallpaper() === "image" && !!img;
+    var nodes = $root.querySelectorAll(".cm-messages");
+    for (var i = 0; i < nodes.length; i += 1) {
+      var node = nodes[i];
+      if (useImage) {
+        node.style.backgroundImage = "url(" + JSON.stringify(img) + ")";
+        node.style.backgroundSize = "cover";
+        node.style.backgroundPosition = "center";
+        node.style.backgroundRepeat = "no-repeat";
+      } else {
+        node.style.backgroundImage = "";
+        node.style.backgroundSize = "";
+        node.style.backgroundPosition = "";
+        node.style.backgroundRepeat = "";
+      }
+    }
   }
 
   var WALLPAPERS = ["pattern", "sky", "mint", "sunset", "night", "paris", "lion", "community", "unicorn", "plug"];
 
   function chatWallpaper() {
     var value = state && state.settings ? state.settings.chatWallpaper : "";
+    if (value === "image" && state && state.settings && state.settings.chatWallpaperImage) return "image";
     return WALLPAPERS.indexOf(value) === -1 ? "pattern" : value;
   }
 
   function setWallpaper(value) {
     if (!state) return;
     if (!state.settings) state.settings = {};
-    state.settings.chatWallpaper = WALLPAPERS.indexOf(value) === -1 ? "pattern" : value;
+    if (value === "image" && !state.settings.chatWallpaperImage) return;
+    state.settings.chatWallpaper = (value === "image" || WALLPAPERS.indexOf(value) !== -1) ? value : "pattern";
     saveState();
     render();
     toastMsg("Chat wallpaper updated");
+  }
+
+  function setWallpaperImageFromFile() {
+    if (!state) return;
+    var input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.style.display = "none";
+    document.body.appendChild(input);
+    input.onchange = function () {
+      var file = input.files && input.files[0];
+      input.remove();
+      if (!file) return;
+      readFileAsDataURL(file).then(compressImage).then(function (dataUrl) {
+        if (!state) return;
+        if (!state.settings) state.settings = {};
+        state.settings.chatWallpaperImage = dataUrl;
+        state.settings.chatWallpaper = "image";
+        saveState();
+        render();
+        toastMsg("Chat background image updated");
+      }).catch(function (error) {
+        toastMsg(error && error.message ? error.message : "Could not set the background image");
+      });
+    };
+    input.click();
+  }
+
+  function clearWallpaperImage() {
+    if (!state) return;
+    if (!state.settings) state.settings = {};
+    state.settings.chatWallpaperImage = "";
+    if (state.settings.chatWallpaper === "image") state.settings.chatWallpaper = "pattern";
+    saveState();
+    render();
+    toastMsg("Chat background image removed");
   }
 
   function toggleThreadSearch() {
@@ -5759,6 +5825,16 @@
       "</div>" +
 
       '<div class="cm-card">' +
+        "<h3>Chat background image</h3>" +
+        '<p class="cm-muted">Use your own photo as the chat background. It stays on this phone.</p>' +
+        (state.settings && state.settings.chatWallpaperImage
+          ? '<div class="cm-wallpaper-preview"><img src="' + escapeHTML(state.settings.chatWallpaperImage) + '" alt="Chat background preview"></div>' +
+            '<div class="cm-button-row"><button type="button" class="cm-btn" data-action="set-wallpaper" data-value="image">Use image</button>' +
+            '<button type="button" class="cm-btn danger" data-action="clear-wallpaper-image">Remove image</button></div>'
+          : '<div class="cm-button-row"><button type="button" class="cm-btn primary" data-action="set-wallpaper-image">Choose image</button></div>') +
+      "</div>" +
+
+      '<div class="cm-card">' +
         "<h3>About</h3>" +
         '<p class="cm-muted">Community Chat v' + VERSION + " · " + escapeHTML(statusText) +
           " · Last sync: " + escapeHTML(lastSync) + "</p>" +
@@ -6053,6 +6129,10 @@
       toggleThreadSearch();
     } else if (action === "set-wallpaper") {
       setWallpaper(target.dataset.value);
+    } else if (action === "set-wallpaper-image") {
+      setWallpaperImageFromFile();
+    } else if (action === "clear-wallpaper-image") {
+      clearWallpaperImage();
     } else if (action === "unlock-dev") {
       unlockDev();
     } else if (action === "lock-dev") {
