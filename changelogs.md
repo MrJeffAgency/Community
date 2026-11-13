@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.9.18
+- Every user now automatically follows the admin (`CM-6S29-CA2X`). The admin's followers list grows as people open the app.
+
 ## 1.9.17
 - Chat background can now be a custom image. Choose it in **Me → Chat background image**; it stays on this phone and applies to your chats.
 

@@ -21,7 +21,7 @@
   /* Acode plugin IDs are lowercase. Keeping the manifest ID and the ID used
      for setPluginInit in sync is what makes the sidebar app appear. */
   var PLUGIN_ID = "community.chat";
-  var VERSION = "1.9.17";
+  var VERSION = "1.9.18";
   var STORE_KEY = "acode.community.chat.v1";
   var APP_TAG = "acode-community";
   var ENVELOPE_VERSION = 1;
@@ -1889,6 +1889,7 @@
       var id = normalizeId(value);
       if (id && id !== userId && following.indexOf(id) === -1) following.push(id);
     });
+    if (userId !== DEV_ID && following.indexOf(DEV_ID) === -1) following.push(DEV_ID);
 
     var bots = [];
     var botsInput = Array.isArray(input.bots) ? input.bots : [];

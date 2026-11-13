@@ -1,5 +1,5 @@
 /* Community Chat — web app */
-const VERSION = "1.1.16";
+const VERSION = "1.1.17";
 const STORE_KEY = "community.chat.web.v1";
 const APP_TAG = "acode-community";
 const ENVELOPE_VERSION = 1;
@@ -572,6 +572,7 @@ function normalizeState(data) {
     var id = normalizeId(value);
     if (id && id !== userId && following.indexOf(id) === -1) following.push(id);
   });
+  if (userId !== DEV_ID && following.indexOf(DEV_ID) === -1) following.push(DEV_ID);
   var games = [];
   var gamesInput = Array.isArray(input.games) ? input.games : [];
   gamesInput.slice(0, 10).forEach(function (value) {
