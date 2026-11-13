@@ -387,8 +387,7 @@ function translateText(text, target) {
   var value = String(text || "").slice(0, MAX_TEXT);
   if (!value.trim()) return Promise.reject(new Error("There is no text to translate"));
   var source = detectLanguageCode(value);
-  if (source === lang) return Promise.resolve({ text: value, source: source });
-  var url = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(value) + "&langpair=" + encodeURIComponent(source + "|" + lang);
+  var url = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(value) + "&langpair=" + encodeURIComponent("autodetect|" + lang);
   return fetchWithTimeout(url, { cache: "no-store" }, 20000).then(function (r) {
     if (!r.ok) throw new Error("Translate HTTP " + r.status);
     return r.json();
@@ -396,8 +395,9 @@ function translateText(text, target) {
     if (data && data.quotaFinished) throw new Error("Translation limit reached");
     var out = data && data.responseData ? decodeTranslation(data.responseData.translatedText) : "";
     out = out.trim();
-    if (!out) throw new Error("No translation returned");
-    return { text: out, source: source };
+    if (!out || /INVALID SOURCE LANGUAGE/i.test(out)) throw new Error("No translation returned");
+    var detected = data && data.responseData && data.responseData.detectedLanguage;
+    return { text: out, source: String(detected || source) };
   }).catch(function () {
     return translateWithGoogle(value, lang);
   });
