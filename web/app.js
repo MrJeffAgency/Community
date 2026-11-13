@@ -2276,7 +2276,9 @@ function applyRemoteGame(env, silent) {
       status: "pending",
       createdAt: env.ts
     });
-    if (!cash || findCashout(cash.id)) return false;
+    if (!cash) return false;
+    if (!fromAdmin && normalizeId(env.from) !== cash.user) return false;
+    if (findCashout(cash.id)) return false;
     state.cashouts.push(cash);
     if (!silent) { saveState(); refreshGameUI(); }
     return true;

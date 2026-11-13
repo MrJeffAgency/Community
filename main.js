@@ -4183,6 +4183,7 @@
         createdAt: envelope.ts
       });
       if (!cash) return false;
+      if (!fromAdmin && normalizeId(envelope.from) !== cash.user) return false;
       if (findCashout(cash.id)) return false;
       state.cashouts.push(cash);
       if (!silent) { saveState(); refreshGameUI(); }
